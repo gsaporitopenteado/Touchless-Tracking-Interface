@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fit Express — Pedido por Gestos</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">🥗 <span>Fit Express</span></div>
+    <div class="sensor-status" id="sensorStatus">
+      <span class="dot" id="sensorDot"></span>
+      <span id="sensorStatusText">Arduino desconectado</span>
+    </div>
+  </header>
+
+  <main class="app-main">
+
+    <!-- ===================== TELA: INÍCIO ===================== -->
+    <section class="screen" id="screen-start" data-screen="start">
+      <div class="start-card">
+        <h1>Bem-vindo(a) ao Fit Express</h1>
+        <p class="subtitle">Monte seu pedido apenas movendo a mão. Sem toque, sem contato.</p>
+
+        <div class="instructions">
+          <div class="instruction">
+            <span class="ic">↔️↕️</span>
+            <p>Mova a mão sobre as placas <strong>X</strong> e <strong>Y</strong> para navegar pelo cardápio</p>
+          </div>
+          <div class="instruction">
+            <span class="ic">⬇️</span>
+            <p>Abaixe a mão sobre a placa <strong>Z</strong> para <strong>adicionar</strong> o item</p>
+          </div>
+          <div class="instruction">
+            <span class="ic">⬆️</span>
+            <p>Levante a mão da placa <strong>Z</strong> para <strong>remover</strong> o item</p>
+          </div>
+        </div>
+
+        <div class="start-actions">
+          <button class="btn btn-primary" id="btnConnect">🔌 Conectar ao Arduino</button>
+          <label class="sim-toggle">
+            <input type="checkbox" id="chkSimMode" />
+            Modo simulação (usar teclado: setas + espaço + backspace)
+          </label>
+        </div>
+
+        <button class="btn btn-cta" id="btnStartOrder" disabled>Iniciar Pedido ▶</button>
+        <p class="hint" id="startHint">Conecte o Arduino ou ative o modo simulação para continuar.</p>
+      </div>
+    </section>
+
+    <!-- ===================== TELA: CARDÁPIO ===================== -->
+    <section class="screen" id="screen-menu" data-screen="menu" hidden>
+      <div class="menu-layout">
+        <div class="menu-grid" id="menuGrid"><!-- itens injetados via JS --></div>
+
+        <aside class="cart-panel">
+          <h2>Seu Pedido</h2>
+          <ul class="cart-list" id="cartList">
+            <li class="cart-empty">Nenhum item selecionado ainda</li>
+          </ul>
+          <div class="cart-total">
+            <span>Total</span>
+            <strong id="cartTotal">R$ 0,00</strong>
+          </div>
+          <button class="btn btn-primary btn-block" id="btnFinishOrder" disabled>
+            Concluir Pedido
+          </button>
+
+          <div class="sensor-debug">
+            <h3>Sensores</h3>
+            <div class="axis-bar"><label>X</label><progress id="barX" max="30" value="0"></progress><span id="valX">0.0</span></div>
+            <div class="axis-bar"><label>Y</label><progress id="barY" max="30" value="0"></progress><span id="valY">0.0</span></div>
+            <div class="axis-bar"><label>Z</label><progress id="barZ" max="30" value="0"></progress><span id="valZ">0.0</span></div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ===================== TELA: REVISÃO ===================== -->
+    <section class="screen" id="screen-review" data-screen="review" hidden>
+      <div class="panel-card">
+        <h1>Revisar Pedido</h1>
+        <ul class="review-list" id="reviewList"></ul>
+        <div class="cart-total review-total">
+          <span>Total</span>
+          <strong id="reviewTotal">R$ 0,00</strong>
+        </div>
+        <div class="actions-row">
+          <button class="btn btn-secondary" id="btnBackToMenu">◀ Voltar ao Cardápio</button>
+          <button class="btn btn-primary" id="btnGoToPayment">Prosseguir para Pagamento ▶</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== TELA: PAGAMENTO ===================== -->
+    <section class="screen" id="screen-payment" data-screen="payment" hidden>
+      <div class="panel-card">
+        <h1>Forma de Pagamento</h1>
+        <div class="payment-methods" id="paymentMethods">
+          <button class="payment-option" data-method="credito">💳<span>Cartão de Crédito</span></button>
+          <button class="payment-option" data-method="debito">💳<span>Cartão de Débito</span></button>
+          <button class="payment-option" data-method="pix">📱<span>Pix</span></button>
+          <button class="payment-option" data-method="dinheiro">💵<span>Dinheiro</span></button>
+        </div>
+        <div class="cart-total review-total">
+          <span>Total a pagar</span>
+          <strong id="paymentTotal">R$ 0,00</strong>
+        </div>
+        <div class="actions-row">
+          <button class="btn btn-secondary" id="btnBackToReview">◀ Voltar</button>
+          <button class="btn btn-cta" id="btnConfirmPurchase" disabled>Concluir Compra ✔</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== TELA: CONFIRMAÇÃO ===================== -->
+    <section class="screen" id="screen-confirmation" data-screen="confirmation" hidden>
+      <div class="panel-card confirmation-card">
+        <div class="check">✔</div>
+        <h1>Pedido Confirmado!</h1>
+        <p class="order-number">Nº do pedido</p>
+        <div class="order-number-value" id="orderNumber">000</div>
+        <p class="pickup-msg">Retire seu pedido no balcão informando este número.</p>
+        <ul class="review-list" id="confirmationList"></ul>
+        <div class="cart-total review-total">
+          <span>Total pago</span>
+          <strong id="confirmationTotal">R$ 0,00</strong>
+        </div>
+        <button class="btn btn-primary" id="btnNewOrder">Novo Pedido</button>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="serial.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
