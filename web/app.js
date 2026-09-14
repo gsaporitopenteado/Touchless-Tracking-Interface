@@ -286,16 +286,34 @@ function setSensorStatus(kind, text) {
 }
 
 // ---------------------------------------------------------------------
-// Modo simulação por teclado (setas = mover cursor, espaço = selecionar,
-// backspace = desselecionar) — útil para testar sem o Arduino conectado.
+// Modo simulação por teclado — útil para testar sem o Arduino conectado.
+// Esquema (consistente nas 4 telas do fluxo de pedido):
+//   setas   -> mover cursor (Cardápio) / trocar forma de pagamento (Pagamento)
+//   espaço  -> adicionar item destacado (simula Z > 20)          [Cardápio]
+//   backspace -> remover item destacado (simula Z < 10)          [Cardápio]
+//              -> voltar para a tela anterior                    [Revisão/Pagamento]
+//   enter   -> avançar / confirmar a ação principal da tela      [todas]
 // ---------------------------------------------------------------------
+const PAYMENT_METHODS = ["credito", "debito", "pix", "dinheiro"];
+
+function cyclePaymentMethod(delta) {
+  const currentIndex = PAYMENT_METHODS.indexOf(state.paymentMethod);
+  const nextIndex =
+    currentIndex === -1
+      ? 0
+      : (currentIndex + delta + PAYMENT_METHODS.length) % PAYMENT_METHODS.length;
+  state.paymentMethod = PAYMENT_METHODS[nextIndex];
+  renderPayment();
+}
+
 document.getElementById("chkSimMode").addEventListener("change", (e) => {
   state.simMode = e.target.checked;
   if (state.simMode) {
     setSensorStatus("sim", "Modo simulação (teclado) ativo");
     document.getElementById("btnStartOrder").disabled = false;
     document.getElementById("startHint").textContent =
-      "Modo simulação ativo: use as setas, espaço (adicionar) e backspace (remover).";
+      "Modo simulação ativo: setas movem/escolhem, espaço adiciona, " +
+      "backspace remove ou volta, enter avança ou confirma.";
   } else if (!link.isConnected) {
     setSensorStatus("offline", "Arduino desconectado");
     document.getElementById("btnStartOrder").disabled = true;
@@ -303,22 +321,57 @@ document.getElementById("chkSimMode").addEventListener("change", (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
-  if (!state.simMode || state.screen !== "menu") return;
-  const keyMap = {
-    ArrowLeft: "LEFT",
-    ArrowRight: "RIGHT",
-    ArrowUp: "UP",
-    ArrowDown: "DOWN",
-  };
-  if (keyMap[e.key]) {
+  if (!state.simMode) return;
+
+  if (state.screen === "menu") {
+    const keyMap = { ArrowLeft: "LEFT", ArrowRight: "RIGHT", ArrowUp: "UP", ArrowDown: "DOWN" };
+    if (keyMap[e.key]) {
+      e.preventDefault();
+      moveCursor(keyMap[e.key]);
+    } else if (e.key === " ") {
+      e.preventDefault();
+      addToCart(currentItem().id);
+    } else if (e.key === "Backspace") {
+      e.preventDefault();
+      removeFromCart(currentItem().id);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (cartEntries().length > 0) showScreen("review"); // = clicar em "Concluir Pedido"
+    }
+    return;
+  }
+
+  if (state.screen === "review") {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      showScreen("payment"); // = "Prosseguir para Pagamento"
+    } else if (e.key === "Backspace") {
+      e.preventDefault();
+      showScreen("menu"); // = "Voltar ao Cardápio"
+    }
+    return;
+  }
+
+  if (state.screen === "payment") {
+    if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      e.preventDefault();
+      cyclePaymentMethod(-1);
+    } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+      e.preventDefault();
+      cyclePaymentMethod(1);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      confirmPurchase(); // = "Concluir Compra" (só age se já houver método escolhido)
+    } else if (e.key === "Backspace") {
+      e.preventDefault();
+      showScreen("review"); // = "Voltar"
+    }
+    return;
+  }
+
+  if (state.screen === "confirmation" && e.key === "Enter") {
     e.preventDefault();
-    moveCursor(keyMap[e.key]);
-  } else if (e.key === " ") {
-    e.preventDefault();
-    addToCart(currentItem().id);
-  } else if (e.key === "Backspace") {
-    e.preventDefault();
-    removeFromCart(currentItem().id);
+    startNewOrder(); // = "Novo Pedido"
   }
 });
 
@@ -346,18 +399,22 @@ document.querySelectorAll(".payment-option").forEach((btn) => {
   });
 });
 
-document.getElementById("btnConfirmPurchase").addEventListener("click", () => {
+function confirmPurchase() {
+  if (!state.paymentMethod) return;
   const orderNumber = String(Math.floor(100 + Math.random() * 900));
   document.getElementById("orderNumber").textContent = orderNumber;
   document.getElementById("confirmationList").innerHTML = document.getElementById("reviewList").innerHTML;
   document.getElementById("confirmationTotal").textContent = formatBRL(cartTotal());
   showScreen("confirmation");
-});
+}
 
-document.getElementById("btnNewOrder").addEventListener("click", () => {
+function startNewOrder() {
   state.cart = {};
   state.paymentMethod = null;
   state.cursorRow = 0;
   state.cursorCol = 0;
   showScreen("start");
-});
+}
+
+document.getElementById("btnConfirmPurchase").addEventListener("click", confirmPurchase);
+document.getElementById("btnNewOrder").addEventListener("click", startNewOrder);
