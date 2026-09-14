@@ -12,10 +12,12 @@ navegar, Z para confirmar/cancelar) e adiciona um fluxo completo de pedido:
 ## Estrutura do projeto
 
 ```
-firmware/_3DInterface/_3DInterface.ino   # firmware ORIGINAL do Arduino (sem alterações)
-web/index.html, style.css, app.js         # front-end do totem (telas, carrinho, checkout)
-web/serial.js                             # leitura da porta serial (Web Serial API)
-web/sensors.js                            # calibração/normalização + getPosition (porta do Processing original)
+firmware/_3DInterface/_3DInterface.ino     # firmware ORIGINAL do Arduino (sem alterações)
+calibration-tool/calibration_tool.pde      # utilitário Processing p/ descobrir os limites de calibração (só nesta branch)
+web/index.html, style.css, app.js          # front-end do totem (telas, carrinho, checkout)
+web/serial.js                              # leitura da porta serial (Web Serial API)
+web/sensors.js                             # calibração/normalização + getPosition (porta do Processing original)
+web/calibration-config.js                  # calibração FIXA (min/max por eixo) usada nesta branch
 ```
 
 ## Branches deste repositório
@@ -26,7 +28,7 @@ a **calibração** dos sensores é feita muda entre duas branches:
 | Branch | Calibração |
 |---|---|
 | `calibracao-web` | Feita **no próprio site** (botão "Calibrar" no front-end web, em JavaScript) |
-| `calibracao-processing` | Feita **uma única vez no Processing** (sketch original `TicTacToe3D`), com os valores min/max colados num arquivo de configuração do front-end |
+| `calibracao-processing` | Feita **uma única vez no Processing** (utilitário `calibration-tool/calibration_tool.pde`), com os valores min/max colados num arquivo de configuração do front-end |
 
 Veja a seção [Calibração](#calibração) para o porquê disso ser necessário.
 
@@ -109,13 +111,32 @@ branches é **de onde vêm os limites min/max**:
   calibração, mova a mão de ponta a ponta em X, Y e Z; os limites ficam
   salvos no navegador (`localStorage`) e não precisam ser refeitos a cada
   vez que o site é aberto (só quando a calibração parecer errada).
-- **`calibracao-processing`**: você roda o sketch `TicTacToe3D.pde` original
-  no Processing **uma vez**, no mesmo Arduino/placas, para descobrir os
-  limites (segurando o botão esquerdo do mouse enquanto move a mão),
-  anota os valores de `min`/`max` de cada `Normalize` (dá para imprimir com
-  `println` dentro do sketch, ou inspecionar em modo debug), e cola esses 6
-  números num arquivo de configuração do front-end web — que passa a usá-los
-  fixos, sem nenhuma calibração acontecendo no navegador.
+- **`calibracao-processing`** *(esta branch)*: em vez de rodar o jogo
+  `TicTacToe3D` completo só para calibrar, use o utilitário dedicado
+  `calibration-tool/calibration_tool.pde` (mesma técnica do
+  `Normalize.pde` original, só que isolada num sketch pequeno):
+  1. Abra `calibration_tool.pde` no Processing e ajuste `PORT_INDEX` para
+     a porta serial do seu Arduino (a lista de portas aparece no console
+     ao rodar).
+  2. Rode o sketch. Segure o botão **esquerdo do mouse** e mova a mão de
+     ponta a ponta sobre as 3 placas (bem perto e bem longe de cada uma).
+  3. Solte o mouse e pressione **`p`** — o console imprime um trecho pronto
+     para colar, por exemplo:
+     ```js
+     const FIXED_CALIBRATION = {
+       x: { min: 118, max: 942 },
+       y: { min: 96, max: 887 },
+       z: { min: 130, max: 910 },
+     };
+     ```
+  4. Cole esse trecho substituindo o conteúdo de `web/calibration-config.js`.
+  5. Se a leitura parecer errada (zona morta deslocada, cursor não chega
+     nas pontas), pressione **`r`** no utilitário para reiniciar e calibre
+     de novo — não precisa recompilar nem tocar no firmware.
+
+  O front-end web carrega esses limites fixos ao iniciar (sem nenhuma
+  calibração acontecendo no navegador) — a tela inicial mostra a faixa
+  carregada para conferência.
 
 ## Rodando o front-end
 

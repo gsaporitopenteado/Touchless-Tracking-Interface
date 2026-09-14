@@ -57,7 +57,21 @@ const axisX = new AxisPipeline(0.15);
 const axisY = new AxisPipeline(0.15);
 const axisZ = new AxisPipeline(0.15);
 
+// Calibração FIXA (definida em calibration-config.js, obtida rodando o
+// utilitário Processing em /calibration-tool/). Não há calibração ao vivo
+// nesta branch — para recalibrar, rode o utilitário de novo e atualize
+// FIXED_CALIBRATION.
+axisX.normalize.setRange(FIXED_CALIBRATION.x.min, FIXED_CALIBRATION.x.max);
+axisY.normalize.setRange(FIXED_CALIBRATION.y.min, FIXED_CALIBRATION.y.max);
+axisZ.normalize.setRange(FIXED_CALIBRATION.z.min, FIXED_CALIBRATION.z.max);
+
 let prevPosZ = 1; // começa na zona morta, para não disparar gesto ao ligar
+
+document.getElementById("fixedCalibrationHint").textContent =
+  `Calibração fixa carregada: X ${FIXED_CALIBRATION.x.min}–${FIXED_CALIBRATION.x.max} · ` +
+  `Y ${FIXED_CALIBRATION.y.min}–${FIXED_CALIBRATION.y.max} · ` +
+  `Z ${FIXED_CALIBRATION.z.min}–${FIXED_CALIBRATION.z.max} ` +
+  `(edite web/calibration-config.js para recalibrar)`;
 
 // ---------------------------------------------------------------------
 // Utilidades
