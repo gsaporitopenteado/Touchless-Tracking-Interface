@@ -42,8 +42,30 @@
           <button class="btn btn-primary" id="btnConnect">🔌 Conectar ao Arduino</button>
           <label class="sim-toggle">
             <input type="checkbox" id="chkSimMode" />
-            Modo simulação (usar teclado: setas + espaço + backspace)
+            Firmware falso (teclado: ←→ eixo X, ↑↓ eixo Y, w/s eixo Z)
           </label>
+        </div>
+
+        <div class="calib-block">
+          <h2>Calibração</h2>
+          <p class="calib-intro">
+            Igual ao sketch do Processing: <strong>segure</strong> o botão abaixo
+            (ou a barra de espaço) e varra a mão por todo o alcance de cada
+            placa, do encosto até fora de alcance. Os limites são aprendidos
+            enquanto o botão estiver pressionado.
+          </p>
+          <div class="calib-actions">
+            <button class="btn btn-secondary" id="btnCalibrate" disabled>✋ Definir limites (segure)</button>
+            <button class="btn btn-secondary" id="btnResetCalib">↺ Reiniciar calibração</button>
+          </div>
+          <div class="sensor-debug">
+            <h3>Leituras</h3>
+            <div class="axis-bar"><label>X</label><progress id="calBarX" max="1" value="0"></progress><span id="calValX">–</span></div>
+            <div class="axis-bar"><label>Y</label><progress id="calBarY" max="1" value="0"></progress><span id="calValY">–</span></div>
+            <div class="axis-bar"><label>Z</label><progress id="calBarZ" max="1" value="0"></progress><span id="calValZ">–</span></div>
+            <p class="cell-readout" id="calibCell">célula – – –</p>
+          </div>
+          <p class="hint" id="calibHint">Conecte uma fonte de dados para calibrar.</p>
         </div>
 
         <button class="btn btn-cta" id="btnStartOrder" disabled>Iniciar Pedido ▶</button>
@@ -74,6 +96,7 @@
             <div class="axis-bar"><label>X</label><progress id="barX" max="30" value="0"></progress><span id="valX">0.0</span></div>
             <div class="axis-bar"><label>Y</label><progress id="barY" max="30" value="0"></progress><span id="valY">0.0</span></div>
             <div class="axis-bar"><label>Z</label><progress id="barZ" max="30" value="0"></progress><span id="valZ">0.0</span></div>
+            <p class="cell-readout" id="cellReadout">célula – – –</p>
           </div>
         </aside>
       </div>
@@ -136,6 +159,8 @@
   </main>
 
   <script src="serial.js"></script>
+  <script src="fake-firmware.js"></script>
+  <script src="tracking.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

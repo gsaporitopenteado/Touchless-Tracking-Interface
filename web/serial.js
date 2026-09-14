@@ -2,12 +2,15 @@
  * serial.js
  * ----------------------------------------------------------------------
  * Wrapper fino sobre a Web Serial API para conversar com o firmware do
- * Arduino (ver /firmware/touchless_interface/touchless_interface.ino).
+ * Arduino (arduino/totem/totem.ino — NAO alterar).
  *
- * O firmware envia uma linha JSON por ciclo (~30ms):
- *   {"x":18.4,"y":9.2,"z":24.7,"moveH":"RIGHT","moveV":"NONE","gesture":"SELECT"}
+ * Esse firmware imprime UMA linha por ciclo com tres contagens brutas
+ * separadas por espaco (pinos 8, 9 e 10):
  *
- * Linhas de depuração/calibração começam com '#' e são ignoradas aqui.
+ *   12480 3312 7936
+ *
+ * Nao ha JSON, nao ha calibracao e nao ha logica de gesto no firmware:
+ * tudo isso acontece no PC, em tracking.js (porte do sketch Processing).
  *
  * Requisitos do navegador: Chrome/Edge (desktop) com Web Serial API,
  * servido via http://localhost ou https:// (contexto seguro).
@@ -105,17 +108,20 @@ class ArduinoLink extends EventTarget {
   }
 
   _handleLine(line) {
+    // O sketch original nao emite linhas de depuracao, mas mantemos o
+    // descarte de '#' para nao quebrar se alguem instrumentar o firmware.
     if (line.startsWith("#")) {
       this.dispatchEvent(new CustomEvent("debug", { detail: line }));
       return;
     }
-    if (!line.startsWith("{")) return;
 
-    try {
-      const data = JSON.parse(line);
-      this.dispatchEvent(new CustomEvent("data", { detail: data }));
-    } catch (err) {
-      // linha corrompida (comum ao conectar no meio de um frame) — ignora
-    }
+    // "12480 3312 7936" -> [12480, 3312, 7936]
+    const parts = line.split(/\s+/).filter((tok) => tok.length > 0);
+    if (parts.length !== 3) return; // linha truncada (comum no reset da placa)
+
+    const xyz = parts.map(Number);
+    if (xyz.some((v) => !Number.isFinite(v))) return;
+
+    this.dispatchEvent(new CustomEvent("data", { detail: { raw: xyz } }));
   }
 }

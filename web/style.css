@@ -289,3 +289,58 @@ html, body {
   .menu-layout { grid-template-columns: 1fr; }
   .menu-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ---------------------------------------------------------------------
+   Calibração (tela inicial) e leitura de célula — adicionado junto com
+   o porte do pipeline do Processing (tracking.js). Nada acima foi
+   alterado.
+   --------------------------------------------------------------------- */
+.calib-block {
+  margin-top: 24px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--green-100);
+  text-align: left;
+}
+.calib-block h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  color: var(--green-700);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.calib-intro {
+  margin: 0 0 14px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.calib-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.calib-block .sensor-debug {
+  border-top-color: #c8e2d3;
+}
+/* botão pressionado durante a varredura de limites */
+#btnCalibrate.calibrating {
+  background: var(--amber-500);
+  color: #3a2a06;
+  box-shadow: 0 0 0 3px rgba(242, 169, 60, 0.35);
+}
+.cell-readout {
+  margin: 10px 0 0;
+  font-family: "Consolas", "SF Mono", ui-monospace, monospace;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--green-700);
+}
+/* foco da forma de pagamento movido pelos eixos X/Y (o `.selected`
+   continua indicando a forma efetivamente escolhida) */
+.payment-option.cursor {
+  border-color: var(--amber-500);
+  transform: translateY(-3px);
+}
