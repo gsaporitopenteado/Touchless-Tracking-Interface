@@ -2,18 +2,33 @@
 
 Sistema de autoatendimento sem toque: o cliente navega pelo cardápio e monta
 o pedido movendo a mão sobre três placas de alumínio (sensores capacitivos
-X/Y/Z), inspirado no projeto [A Touchless 3D Tracking Interface (Make:)](https://makezine.com/projects/a-touchless-3d-tracking-interface/)
-([código original](https://github.com/Make-Magazine/3DInterface)). Este
-projeto usa apenas o plano 2D (X/Y para navegar, Z para confirmar/cancelar) e
-adiciona um fluxo completo de pedido: **seleção → revisão → pagamento →
-confirmação com número de retirada**.
+X/Y/Z), usando o firmware **original e não modificado** do projeto
+[A Touchless 3D Tracking Interface (Make:)](https://makezine.com/projects/a-touchless-3d-tracking-interface/)
+([repositório original](https://github.com/Make-Magazine/3DInterface), autor
+do firmware: Kyle McDonald). Este projeto usa apenas o plano 2D (X/Y para
+navegar, Z para confirmar/cancelar) e adiciona um fluxo completo de pedido:
+**seleção → revisão → pagamento → confirmação com número de retirada**.
 
 ## Estrutura do projeto
 
 ```
-firmware/touchless_interface/touchless_interface.ino   # firmware do Arduino
-web/index.html, style.css, app.js, serial.js            # front-end do totem
+firmware/_3DInterface/_3DInterface.ino   # firmware ORIGINAL do Arduino (sem alterações)
+web/index.html, style.css, app.js         # front-end do totem (telas, carrinho, checkout)
+web/serial.js                             # leitura da porta serial (Web Serial API)
+web/sensors.js                            # calibração/normalização + getPosition (porta do Processing original)
 ```
+
+## Branches deste repositório
+
+Este `main` traz a base comum (firmware original + front-end). A forma como
+a **calibração** dos sensores é feita muda entre duas branches:
+
+| Branch | Calibração |
+|---|---|
+| `calibracao-web` | Feita **no próprio site** (botão "Calibrar" no front-end web, em JavaScript) |
+| `calibracao-processing` | Feita **uma única vez no Processing** (sketch original `TicTacToe3D`), com os valores min/max colados num arquivo de configuração do front-end |
+
+Veja a seção [Calibração](#calibração) para o porquê disso ser necessário.
 
 ## Hardware (conforme o esquemático do projeto)
 
@@ -37,61 +52,70 @@ web/index.html, style.css, app.js, serial.js            # front-end do totem
 - Um resistor de 220kΩ liga 5V ao mesmo nó de cada placa (pull-up).
 - As placas são de papelão revestido com papel alumínio, isoladas entre si.
 
-**Princípio de leitura:** cada pino descarrega o nó (modo `OUTPUT LOW`) e
-depois é liberado (`INPUT`, alta impedância). O resistor de 220kΩ recarrega o
-nó até o pino ler `HIGH`; o tempo até isso acontecer é maior quanto mais perto
-a mão estiver da placa (mais capacitância = carga mais lenta). O firmware usa
-esse tempo (em microssegundos) como leitura bruta de cada eixo — é a mesma
-técnica de "charge transfer" usada em sensores capacitivos caseiros, e
-dispensa pinos extras de emissor/receptor.
+## Firmware — original, sem modificações
 
-> ⚠️ Os tempos brutos variam de acordo com o tamanho das placas, distância
-> entre elas e o ambiente. **Calibre sempre** (próxima seção) antes do uso
-> real — os valores padrão no firmware são só um ponto de partida.
+`firmware/_3DInterface/_3DInterface.ino` é uma cópia **verbatim** do firmware
+do projeto original (por Kyle McDonald, via
+[instructables.com/id/DIY-3D-Controller](http://www.instructables.com/id/DIY-3D-Controller/)
+e o repositório [Make-Magazine/3DInterface](https://github.com/Make-Magazine/3DInterface)).
+Não alteramos nada nele — nem os pinos, nem a lógica de leitura.
 
-## Gravando o firmware
+**Princípio de leitura:** para cada pino (8=X, 9=Y, 10=Z), o firmware
+descarrega o nó (`OUTPUT LOW`) e libera o pino (`INPUT`), contando quantas
+iterações de um laço são necessárias até o pino ler `HIGH` de novo (o
+resistor de 220kΩ recarrega o nó através da capacitância placa+mão). Isso é
+repetido o quanto der dentro de uma janela de tempo fixa (`refresh`, cerca de
+40ms), e o firmware manda a média de iterações por ciclo. Mais capacitância
+(mão mais perto) = recarga mais lenta = número menor de iterações no mesmo
+tempo — não é um valor de distância em unidade física, é um número bruto
+proporcional à proximidade, sem escala fixa.
 
-1. Abra `firmware/touchless_interface/touchless_interface.ino` na Arduino IDE.
-2. Selecione a placa (Uno/Nano/Mega) e a porta serial correspondente.
-3. Faça upload.
-4. Abra o Serial Monitor a **115200 baud** para calibrar.
+**Saída serial (115200 baud):** uma linha de texto por ciclo, com os 3
+valores brutos separados por espaço, **sem calibração nem unidade**:
 
-### Calibração (via Serial Monitor, sem quebra de linha automática)
-
-Para cada eixo, meça dois pontos: `NEAR` (mão tocando a placa) e `FAR` (mão
-fora de alcance, ~30cm ou ausente):
-
-| Comando | Ação |
-|---|---|
-| `xn` | grava NEAR do eixo X com a leitura atual |
-| `xf` | grava FAR do eixo X com a leitura atual |
-| `yn` / `yf` | idem para o eixo Y |
-| `zn` / `zf` | idem para o eixo Z |
-| `p` | imprime a calibração atual e as leituras brutas (para conferir) |
-| `s` | salva a calibração na EEPROM (persiste após desligar) |
-| `r` | restaura a calibração padrão de fábrica |
-
-Roteiro sugerido: com a mão longe de todas as placas, digite `xf`, `yf`,
-`zf`. Em seguida, encoste a mão em cada placa (uma de cada vez) e digite
-`xn`, `yn`, `zn` respectivamente. Confira com `p` e finalize com `s`.
-
-## Saída de dados do firmware
-
-Uma linha JSON por ciclo (~33 Hz):
-
-```json
-{"x":18.4,"y":9.2,"z":24.7,"moveH":"RIGHT","moveV":"NONE","gesture":"SELECT"}
+```
+1234 5678 910
 ```
 
-- `x`, `y`, `z`: posição estimada de 0 a 30 em cada eixo.
-- `moveH` / `moveV`: evento de passo (`LEFT`/`RIGHT`/`UP`/`DOWN`/`NONE`),
-  já com limitação de taxa (repete a cada ~350ms enquanto a mão permanece
-  fora da zona morta 10–20).
-- `gesture`: evento de borda (`SELECT`/`DESELECT`/`NONE`) — dispara uma
-  única vez a cada cruzamento das zonas Z<10 ou Z>20.
+### Gravando o firmware
 
-Linhas de depuração da calibração começam com `#` e são ignoradas pelo
-front-end.
+1. Abra `firmware/_3DInterface/_3DInterface.ino` na Arduino IDE.
+2. Selecione a placa (Uno/Nano/Mega) e a porta serial correspondente.
+3. Se você estiver fora da América do Norte/Japão, confira a linha
+   `#define mains 50` (rede elétrica de 50Hz — já é o padrão do arquivo,
+   correto para o Brasil). Só mude para `60` em países de 60Hz.
+4. Faça upload. Não é necessário abrir o Serial Monitor para calibrar — a
+   calibração acontece no PC (ver abaixo), não no Arduino.
+
+## Calibração
+
+Como o firmware manda só números brutos sem escala, alguém do lado do PC
+precisa descobrir o mínimo e o máximo que cada eixo produz (mão longe da
+placa vs. mão encostada) para converter isso em uma posição útil — exatamente
+como o sketch Processing original (`TicTacToe3D.pde` + `Normalize.pde` +
+`MomentumAverage.pde`) faz: guarda o menor e o maior valor já vistos por
+eixo, normaliza a leitura atual para uma escala de 0 a 1 entre esses limites,
+suaviza com uma média móvel, e divide o resultado em 3 zonas discretas
+(`getPosition`) — exatamente os limiares 10/20 (de 0 a 30) pedidos na
+especificação deste projeto.
+
+`web/sensors.js` é uma porta fiel desse algoritmo para JavaScript
+(`Normalize`, `MomentumAverage`, `getPosition`). O que muda entre as duas
+branches é **de onde vêm os limites min/max**:
+
+- **`calibracao-web`**: um botão "Calibrar" no próprio site ativa a mesma
+  ideia do Processing original (lá, você segura o botão esquerdo do mouse e
+  move a mão pelas 3 placas para "ensinar" os limites) — aqui, ativado o modo
+  calibração, mova a mão de ponta a ponta em X, Y e Z; os limites ficam
+  salvos no navegador (`localStorage`) e não precisam ser refeitos a cada
+  vez que o site é aberto (só quando a calibração parecer errada).
+- **`calibracao-processing`**: você roda o sketch `TicTacToe3D.pde` original
+  no Processing **uma vez**, no mesmo Arduino/placas, para descobrir os
+  limites (segurando o botão esquerdo do mouse enquanto move a mão),
+  anota os valores de `min`/`max` de cada `Normalize` (dá para imprimir com
+  `println` dentro do sketch, ou inspecionar em modo debug), e cola esses 6
+  números num arquivo de configuração do front-end web — que passa a usá-los
+  fixos, sem nenhuma calibração acontecendo no navegador.
 
 ## Rodando o front-end
 
@@ -112,11 +136,12 @@ Depois abra `http://localhost:8080` no Chrome.
    seletor de porta nativo do navegador) ou ative o **Modo simulação** para
    testar com o teclado (setas movem o cursor, `Espaço` adiciona o item,
    `Backspace` remove) sem precisar do hardware.
-2. **Cardápio** — mova a mão sobre X/Y para navegar entre os 9 itens da
-   grade; abaixe a mão sobre Z para adicionar o item destacado ao pedido,
-   levante para remover. O painel lateral mostra o carrinho, o total e as
-   leituras brutas dos sensores em tempo real. Clique em **Concluir Pedido**
-   (ação manual, não por gesto) para seguir.
+2. **Cardápio** — a posição da mão em X/Y posiciona o cursor diretamente na
+   grade 3x3 de itens (mesma ideia do `ixyz[]` do sketch original); abaixe a
+   mão sobre a placa Z para adicionar o item destacado ao pedido, levante
+   para remover. O painel lateral mostra o carrinho, o total e as leituras
+   dos sensores (normalizadas e brutas) em tempo real. Clique em **Concluir
+   Pedido** (ação manual, não por gesto) para seguir.
 3. **Revisão** — confira os itens e o total; pode **Voltar ao Cardápio** ou
    **Prosseguir para Pagamento**.
 4. **Pagamento** — escolha a forma de pagamento (Crédito, Débito, Pix ou
@@ -126,22 +151,26 @@ Depois abra `http://localhost:8080` no Chrome.
 
 ## Lógica de posicionamento (especificação)
 
-Origem no encontro das 3 placas; eixos de 0 a 30.
+Origem no encontro das 3 placas; eixos conceitualmente de 0 a 30, reduzidos
+pelo `getPosition` a 3 zonas (0/1/2) por eixo:
 
-| Eixo | Zona morta | Abaixo (`< 10`) | Acima (`> 20`) |
+| Eixo | Zona morta (posição 1) | Posição 0 (`< 10`) | Posição 2 (`> 20`) |
 |---|---|---|---|
-| X | 10–20: parado na horizontal | move para a **direita** | move para a **esquerda** |
-| Y | 10–20: parado na vertical | move para **cima** | move para **baixo** |
-| Z | 10–20: sem mudança de seleção | **desseleciona** o item | **seleciona** o item |
+| X | parado na horizontal | move para a **direita** | move para a **esquerda** |
+| Y | parado na vertical | move para **cima** | move para **baixo** |
+| Z | sem mudança de seleção | **desseleciona** o item | **seleciona** o item |
 
-Essa lógica está implementada inteiramente no firmware (não no front-end),
-que só recebe os eventos já processados (`moveH`, `moveV`, `gesture`).
+X e Y são tratados como posição **absoluta** na grade 3x3 do cardápio (a
+mesma abordagem do `getPosition`/`ixyz[]` do `TicTacToe3D.pde`); Z dispara
+por **borda** (uma vez a cada cruzamento de zona), para não repetir o
+gesto enquanto a mão permanece parada.
 
 ## Possíveis próximos passos
 
-- Ajustar `MOVE_REPEAT_MS` e `SMOOTHING_ALPHA` no firmware conforme a
-  sensibilidade desejada.
 - Adicionar categorias (pratos/bebidas/sobremesas) com abas navegáveis pelo
   plano XZ/YZ, caso o cardápio cresça além de 9 itens.
 - Persistir o histórico de pedidos (número sequencial real) em vez do
   número aleatório usado na tela de confirmação.
+- Reavaliar `CUTOFF_LOW`/`CUTOFF_HIGH` em `sensors.js` (hoje 1/3 e 2/3, para
+  bater com os limiares 10/20 de 0-30 da especificação) caso a resposta dos
+  sensores peça uma zona morta maior ou menor.
