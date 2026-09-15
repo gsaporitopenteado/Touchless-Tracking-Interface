@@ -23,18 +23,52 @@
 // sqrt(1/n), o que implica capacitancia ~ 1/d^2. Usamos o mesmo modelo
 // na direcao inversa:
 //
-//     raw(d) = BASE + ESCALA / d^2,   d = DMIN + u * (DMAX - DMIN)
+//     raw(d) = BASE[i] + ESCALA[i] / d^2,   d = DMIN + u * (DMAX - DMIN)
 //
 // onde u e a mao virtual, de 0 (encostada) a 1 (longe). DMAX = 2.6 foi
 // escolhido para que, depois de uma varredura completa, as tres zonas
 // fiquem com faixas de tamanho parecido (~28% / ~43% / ~30% do curso).
+//
+// ESCALA DAS CONTAGENS: POR QUE ISTO E POR EIXO AGORA
+// ---------------------------------------------------
+// Ate entao BASE e ESCALA eram escalares (1200 e 24000), cobrindo de
+// 1200 a 25200 contagens - um span de 24000. A bancada mostrou que o
+// hardware real entrega span de 373 / 238 / 190, sessenta vezes menos:
+// no totem.ino ~98% da contagem e offset fixo (capacitancia do pino e
+// overhead do laco), e a mao mexe so nos ~2% restantes.
+//
+// Um firmware falso sessenta vezes mais generoso que a placa nao testa
+// o que precisa ser testado - ele mascara justamente as margens
+// apertadas. Pior, ele obrigava o calib.json a servir a duas faixas
+// incompativeis: a calibracao real saturava o teclado e vice-versa.
+//
+// Os valores abaixo saem das medicoes de bancada (mao fora = min, mao
+// encostada na placa = max):
+//
+//     eixo    min      max     span
+//     X     14567    14940      373
+//     Y     14555    14793      238
+//     Z     13880    14070      190
+//
+// Resolvendo raw(u=1) = min e raw(u=0) = max para cada eixo:
+//     ESCALA = span / (1 - 1/DMAX^2),   BASE = min - ESCALA / DMAX^2
 // ============================================================
 
-final float FAKE_ESCALA = 24000;
-final float FAKE_BASE = 1200;
+final float[] FAKE_ESCALA = { 438, 279, 223 };
+final float[] FAKE_BASE   = { 14502, 14514, 13847 };
 final float FAKE_DMIN = 1.0;
 final float FAKE_DMAX = 2.6;
-final float FAKE_RUIDO = 0.004;      // +-0.4%, para parecer um sensor
+
+/** Ruido ADITIVO em contagens, por eixo: random(-A, +A) uniforme, com
+ *  A = desvio * sqrt(3) medido com a mao fora de alcance (desvios de
+ *  8.0 / 18.0 / 14.4 contagens).
+ *
+ *  Era multiplicativo (+-0.4%), o que sobre 14500 contagens dariam
+ *  +-58 - quinze por cento do span de X e mais que um quarto do de Z.
+ *  Em contagem absoluta o ruido nao escala com o offset, entao
+ *  multiplicativo e o modelo errado aqui. */
+final float[] FAKE_RUIDO = { 14, 31, 25 };
+
 final int   FAKE_INTERVALO_MS = 100; // ~10 Hz, igual ao totem.ino real
 
 /** Velocidade da mao virtual, em unidades de u por segundo. O curso
@@ -75,6 +109,14 @@ void fakeRecentra() {
  *  u = 1 e "baixo" pede u = 0 - o contrario de X. Foi exatamente essa
  *  inversao que confundiu os testes da versao web. */
 void fakeAtualizaAlvos() {
+  // Durante a varredura automatica quem manda em fakeAlvo e a
+  // varredura. Sem isto os dois escrevem no mesmo quadro: a varredura
+  // pede o extremo, este aqui devolve 0.5 logo em seguida, e a mao
+  // virtual estaciona em u ~ 0.09..0.91 em vez de ir de ponta a ponta.
+  // Com o span antigo de 24000 contagens sobrava faixa e ninguem viu;
+  // com o span real de Z (190) isso derrubava o portao de calibracao.
+  if (fakeVarrendo) return;
+
   // X: zona 0 (esquerda) = perto da placa = u 0
   if (tEsq && !tDir)      fakeAlvo[0] = 0.0;
   else if (tDir && !tEsq) fakeAlvo[0] = 1.0;
@@ -111,16 +153,15 @@ void fakeRoda() {
   if (agora - fakeUltimoEmit >= FAKE_INTERVALO_MS) {
     fakeUltimoEmit = agora;
     float[] raw = new float[3];
-    for (int i = 0; i < 3; i++) raw[i] = fakeContagem(fakeU[i]);
+    for (int i = 0; i < 3; i++) raw[i] = fakeContagem(i, fakeU[i]);
     processaQuadro(raw);
   }
 }
 
-float fakeContagem(float u) {
+float fakeContagem(int eixo, float u) {
   float d = FAKE_DMIN + u * (FAKE_DMAX - FAKE_DMIN);
-  float limpo = FAKE_BASE + FAKE_ESCALA / (d * d);
-  float ruido = 1 + random(-FAKE_RUIDO, FAKE_RUIDO);
-  return round(limpo * ruido);
+  float limpo = FAKE_BASE[eixo] + FAKE_ESCALA[eixo] / (d * d);
+  return round(limpo + random(-FAKE_RUIDO[eixo], FAKE_RUIDO[eixo]));
 }
 
 /** Varredura automatica de calibracao, para nao precisar segurar C e

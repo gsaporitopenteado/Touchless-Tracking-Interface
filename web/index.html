@@ -10,24 +10,49 @@
   <header class="app-header">
     <div class="brand">🥗 <span>Fit Express</span></div>
     <div class="nav-hud" id="navHud">
-      <span class="hud-axis" id="hudX">
-        <span class="hud-label">X</span>
-        <span class="hud-dir">■</span>
-        <span class="hud-val">0.00</span>
-        <span class="hud-bar"><span class="hud-fill"></span></span>
-      </span>
-      <span class="hud-axis" id="hudY">
-        <span class="hud-label">Y</span>
-        <span class="hud-dir">■</span>
-        <span class="hud-val">0.00</span>
-        <span class="hud-bar"><span class="hud-fill"></span></span>
-      </span>
-      <span class="hud-axis" id="hudZ">
-        <span class="hud-label">Z</span>
-        <span class="hud-dir">—</span>
-        <span class="hud-val">0.00</span>
-        <span class="hud-bar"><span class="hud-fill"></span></span>
-      </span>
+      <!-- em cima de cada eixo: − mede o mínimo, + mede o máximo (app.js) -->
+      <div class="hud-col">
+        <div class="hud-calib">
+          <button type="button" class="hud-cal-btn" data-axis="0" data-bound="min"
+                  title="Mede o mínimo de X: mão LONGE da placa">− <span class="hud-cal-val">mín</span></button>
+          <button type="button" class="hud-cal-btn" data-axis="0" data-bound="max"
+                  title="Mede o máximo de X: mão ENCOSTADA na placa">+ <span class="hud-cal-val">máx</span></button>
+        </div>
+        <span class="hud-axis" id="hudX">
+          <span class="hud-label">X</span>
+          <span class="hud-dir">■</span>
+          <span class="hud-val">0.00</span>
+          <span class="hud-bar"><span class="hud-fill"></span></span>
+        </span>
+      </div>
+      <div class="hud-col">
+        <div class="hud-calib">
+          <button type="button" class="hud-cal-btn" data-axis="1" data-bound="min"
+                  title="Mede o mínimo de Y: mão LONGE da placa">− <span class="hud-cal-val">mín</span></button>
+          <button type="button" class="hud-cal-btn" data-axis="1" data-bound="max"
+                  title="Mede o máximo de Y: mão ENCOSTADA na placa">+ <span class="hud-cal-val">máx</span></button>
+        </div>
+        <span class="hud-axis" id="hudY">
+          <span class="hud-label">Y</span>
+          <span class="hud-dir">■</span>
+          <span class="hud-val">0.00</span>
+          <span class="hud-bar"><span class="hud-fill"></span></span>
+        </span>
+      </div>
+      <div class="hud-col">
+        <div class="hud-calib">
+          <button type="button" class="hud-cal-btn" data-axis="2" data-bound="min"
+                  title="Mede o mínimo de Z: mão LONGE da placa">− <span class="hud-cal-val">mín</span></button>
+          <button type="button" class="hud-cal-btn" data-axis="2" data-bound="max"
+                  title="Mede o máximo de Z: mão ENCOSTADA na placa">+ <span class="hud-cal-val">máx</span></button>
+        </div>
+        <span class="hud-axis" id="hudZ">
+          <span class="hud-label">Z</span>
+          <span class="hud-dir">—</span>
+          <span class="hud-val">0.00</span>
+          <span class="hud-bar"><span class="hud-fill"></span></span>
+        </span>
+      </div>
     </div>
     <div class="sensor-status" id="sensorStatus">
       <span class="dot" id="sensorDot"></span>
@@ -73,6 +98,13 @@
             (ou a barra de espaço) e varra a mão por todo o alcance de cada
             placa, do encosto até fora de alcance. Os limites são aprendidos
             enquanto o botão estiver pressionado.
+          </p>
+          <p class="calib-intro">
+            Para ajustar um eixo só, a qualquer momento: use os botões
+            <strong>−</strong> e <strong>+</strong> em cima de X, Y e Z no topo.
+            <strong>−</strong> mede o mínimo (mão longe da placa) e
+            <strong>+</strong> o máximo (mão encostada), pela média de
+            várias leituras.
           </p>
           <div class="calib-actions">
             <button class="btn btn-secondary" id="btnCalibrate" disabled>✋ Definir limites (segure)</button>
@@ -177,6 +209,8 @@
     </section>
 
   </main>
+
+  <div class="calib-toast" id="calibToast" role="status" hidden></div>
 
   <script src="serial.js"></script>
   <script src="fake-firmware.js"></script>

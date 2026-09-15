@@ -393,6 +393,71 @@ html, body {
   background: currentColor;
 }
 
+/* ---- botões − / + de calibração, em cima de cada eixo do HUD ---- */
+.hud-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.hud-calib {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+.hud-cal-btn {
+  position: relative;
+  overflow: hidden;
+  padding: 3px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #cfe9da;
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.hud-cal-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
+}
+.hud-cal-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.hud-cal-btn.sampling {
+  background: var(--amber-500);
+  border-color: var(--amber-600);
+  color: #3a2a06;
+}
+/* progresso da amostragem: preenche de 0 a CALIB_SAMPLES leituras */
+.hud-cal-btn::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: calc(var(--progress, 0) * 100%);
+  background: currentColor;
+}
+
+.calib-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 50;
+  padding: 10px 18px;
+  border-radius: 10px;
+  background: var(--green-900);
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+}
+
 /* ---- foco: o mesmo destaque para item, botão ou forma de pagamento ---- */
 .cursor {
   position: relative;

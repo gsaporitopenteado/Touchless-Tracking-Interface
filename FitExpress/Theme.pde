@@ -176,7 +176,9 @@ void icone(PImage img, float x, float y, float s, String legenda) {
 // Medidas que acompanham o tamanho da janela
 // ------------------------------------------------------------
 final float TOPO = 104;    // altura ocupada pelo cabecalho + folga
-final float RODAPE = 96;   // espaco reservado ao HUD no pe da tela
+// 130 = caixas do HUD (40) + botoes - e + de calibracao em cima delas
+// (26) + a faixa do aviso (34) + folgas. Era 96 antes dos botoes.
+final float RODAPE = 130;  // espaco reservado ao HUD no pe da tela
 
 /** Largura de um cartao centralizado, sem passar da janela. */
 float larguraCartao(float preferida) {

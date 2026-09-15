@@ -61,17 +61,47 @@ class MomentumAverage {
 // getPosition() do TicTacToe3D.pde: divide o eixo normalizado
 // (0..1) em 3 zonas, com a zona morta no meio.
 //
-//   zona 0  <->  x < CUTOFF            (0.2)
-//   zona 1  <->  CUTOFF <= x < 1-CUTOFF
-//   zona 2  <->  x >= 1-CUTOFF         (0.8)
+//   zona 0  <->  x < CUTOFF_BAIXO[eixo]
+//   zona 1  <->  CUTOFF_BAIXO[eixo] <= x < CUTOFF_ALTO[eixo]
+//   zona 2  <->  x >= CUTOFF_ALTO[eixo]
 //
-// A zona morta ocupa de 0.2 a 0.8 do curso, ou seja 60% dele - folga
-// de sobra para a mao ficar parada sem acionar nada.
+// O original usava um CUTOFF so (0.2, ou seja 0.2 / 0.8) para os tres
+// eixos. Aqui cada eixo tem os dois limites proprios, porque as placas
+// nao respondem igual: na bancada o span foi 373 / 238 / 190 contagens
+// e o ruido 24 / 74 / 48, entao a mesma fracao do curso significa
+// folgas bem diferentes em cada eixo.
+//
+// O valor comparado e o que o HUD mostra em cada caixa X/Y/Z (ja
+// normalizado, com FLIP e EMA) - leia ali para ajustar.
+//
+// O QUE CADA LIMITE SIGNIFICA NA MAO (com linear = true)
+//
+//   eixo  abaixo de BAIXO (zona 0)       acima de ALTO (zona 2)
+//   X     esquerda  = mao PERTO da placa  direita  = mao LONGE
+//   Y     cima      = mao LONGE (FLIP)    baixo    = mao PERTO
+//   Z     confirmar = mao PERTO da placa  desfazer = mao LONGE
+//
+// Subir BAIXO deixa a zona 0 mais facil de alcancar; descer ALTO deixa
+// a zona 2 mais facil. Os dois juntos definem o tamanho da zona morta.
+// Precisa BAIXO < ALTO em todo eixo, senao a zona neutra some -
+// validaCutoffs() avisa no console ao abrir o sketch.
 // ------------------------------------------------------------
-final float CUTOFF = 0.2;
+//                                X     Y     Z
+final float[] CUTOFF_BAIXO = { 0.2,  0.5,  0.25 };
+final float[] CUTOFF_ALTO  = { 0.8,  0.8,  0.7 };
 
-int getPosition(float x) {
-  if (x < CUTOFF) return 0;
-  if (x < 1 - CUTOFF) return 1;
+int getPosition(int eixo, float x) {
+  if (x < CUTOFF_BAIXO[eixo]) return 0;
+  if (x < CUTOFF_ALTO[eixo]) return 1;
   return 2;
+}
+
+void validaCutoffs() {
+  String[] eixos = { "X", "Y", "Z" };
+  for (int i = 0; i < 3; i++) {
+    if (CUTOFF_BAIXO[i] >= CUTOFF_ALTO[i]) {
+      println("AVISO: eixo " + eixos[i] + " com CUTOFF_BAIXO (" + CUTOFF_BAIXO[i]
+            + ") >= CUTOFF_ALTO (" + CUTOFF_ALTO[i] + ") - sem zona neutra");
+    }
+  }
 }

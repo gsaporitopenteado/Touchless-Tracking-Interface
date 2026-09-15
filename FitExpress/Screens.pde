@@ -177,7 +177,7 @@ void desenhaInicio() {
   } else if (!calibrado()) {
     fill(AMBER_600);
     textFont(fBold);
-    text("Falta calibrar: segure C e varra a mao pelas 3 placas\n(ou tecle A para varredura automatica)",
+    text("Falta calibrar: segure C e varra a mao pelas 3 placas\n(ou - e + em cima de cada eixo; A = varredura automatica)",
          x + 30, iy + 6, w - 60, 46);
   } else {
     fill(GREEN_700);

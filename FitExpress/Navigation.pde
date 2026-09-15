@@ -24,19 +24,20 @@
 // ---- constantes de tempo (as mesmas da versao web) ----
 
 /** Tempo parado em X0/X2/Y0/Y2 antes do PRIMEIRO passo. */
-final int DWELL_XY_MS = 2000;
+final int DWELL_XY_MS = 5000;
 
 /** Tempo em Z0/Z2 antes de acionar. Separado do XY de proposito:
  *  confirmar pode querer ser mais lento (menos falso positivo) do que
  *  navegar, ou o contrario, sem que um afete o outro. */
-final int DWELL_Z_MS = 2000;
+final int DWELL_Z_MS = 5000;
 
 /** Repeticao de X/Y enquanto a mao permanece fora do centro. Menor que
  *  o dwell inicial, senao atravessar 3 colunas levaria 3x o dwell. */
-final int REPEAT_XY_MS = 1000;
+final int REPEAT_XY_MS = 4000;
 
 // ---- histerese: IMPLEMENTADA, MAS DESLIGADA ----
-// Com CUTOFF = 0.2 a zona morta ja ocupa 60% do curso. Ligar isso so
+// Com os cutoffs em 0.2 / 0.8 a zona morta ja ocupa 60% do curso
+// (limites por eixo em CUTOFF_BAIXO / CUTOFF_ALTO, Sensors.pde). Ligar isso so
 // faz sentido se aparecer tremor na fronteira: em controle por taxa um
 // flicker de fronteira nao apenas pisca o destaque, ele INJETA passos.
 // Para ligar, troque para true.
@@ -163,9 +164,9 @@ class Navigator {
 
   /** Zona do eixo. Sem histerese, usa getPosition() sem tocar nele. */
   int zonaDe(int eixo, float v) {
-    if (!HISTERESE_LIGADA) return getPosition(v);
+    if (!HISTERESE_LIGADA) return getPosition(eixo, v);
 
-    float lo = CUTOFF, hi = 1 - CUTOFF, h = HISTERESE_MARGEM;
+    float lo = CUTOFF_BAIXO[eixo], hi = CUTOFF_ALTO[eixo], h = HISTERESE_MARGEM;
     if (v < lo - h) return ZONA_BAIXA;
     if (v > lo + h && v < hi - h) return ZONA_NEUTRA;
     if (v > hi + h) return ZONA_ALTA;

@@ -107,9 +107,21 @@ const FLIP = [false, true, false];
 
 const CUTOFF = 0.2;
 
-// Razão mínima max/min para considerar um eixo calibrado (ver
-// isCalibrated abaixo — acréscimo nosso, não vem do sketch).
-const MIN_CALIBRATION_RATIO = 1.5;
+// Span mínimo (max - min, em contagens) para considerar um eixo calibrado
+// (ver isCalibrated abaixo — acréscimo nosso, não vem do sketch).
+//
+// Até então isto era uma RAZÃO max/min >= 1.5, que só passava com o
+// firmware falso (1200 a 25200 contagens). No totem.ino real ~98% da
+// contagem é offset fixo e a mão mexe nos ~2% restantes: as razões
+// medidas na bancada são 1.027 / 1.019 / 1.015, então a placa real nunca
+// calibrava. Span absoluto não tem esse problema, porque o offset sai na
+// subtração. Na bancada: ruído pico-a-pico 24 / 74 / 48 e span do gesto
+// 373 / 238 / 190. 120 fica acima do maior ruído e abaixo do menor span
+// (é a mesma constante SPAN_MIN_CALIBRACAO do FitExpress em Processing).
+const MIN_CALIBRATION_SPAN = 120;
+
+// Leituras cruas por clique nos botões − / + do HUD (~1 s a 10 Hz).
+const CALIB_SAMPLES = 10;
 
 function getPosition(x) {
   if (DIV === 3) {
@@ -147,6 +159,10 @@ class Tracker extends EventTarget {
     // Equivalente a `mousePressed && mouseButton == LEFT` no Processing:
     // enquanto isto for true, os limites (min/max) são aprendidos.
     this.calibrating = false;
+
+    // Amostragem de um limite só (botões − / + do HUD):
+    // { axis, bound: "min" | "max", sum, count } ou null.
+    this.sampling = null;
   }
 
   /**
@@ -163,6 +179,9 @@ class Tracker extends EventTarget {
     if (this.calibrating) {
       for (let i = 0; i < SEN; i++) this.n[i].note(xyz[i]);
     }
+
+    // acréscimo nosso: amostragem dos botões − / +
+    if (this.sampling) this.addSample(xyz[this.sampling.axis]);
 
     this.nxyz = new Array(SEN).fill(0);
     for (let i = 0; i < SEN; i++) {
@@ -185,6 +204,9 @@ class Tracker extends EventTarget {
       camera: this.cama.map((m) => m.avg),
       ixyz: this.ixyz.slice(),
       calibrating: this.calibrating,
+      sampling: this.sampling
+        ? { axis: this.sampling.axis, bound: this.sampling.bound, count: this.sampling.count }
+        : null,
     };
   }
 
@@ -196,8 +218,7 @@ class Tracker extends EventTarget {
    * interface precisa de um portão ("já pode começar o pedido?"), então
    * exigimos uma variação mínima: só `min !== max` não serve, porque o
    * ruído do sensor garante valores diferentes mesmo com a mão parada.
-   * Do encosto na placa até fora de alcance a contagem varia muito mais
-   * que 50%, então essa razão separa bem uma varredura real de um
+   * O span mínimo (MIN_CALIBRATION_SPAN) separa uma varredura real de um
    * botão apertado sem mover a mão.
    */
   get isCalibrated() {
@@ -205,11 +226,12 @@ class Tracker extends EventTarget {
       (norm) =>
         norm.min !== Number.POSITIVE_INFINITY &&
         norm.min > 0 &&
-        norm.max / norm.min >= MIN_CALIBRATION_RATIO
+        norm.max - norm.min >= MIN_CALIBRATION_SPAN
     );
   }
 
   startCalibration() {
+    this.sampling = null; // a varredura substitui a amostragem em curso
     this.calibrating = true;
     this.dispatchEvent(new CustomEvent("calibration", { detail: true }));
   }
@@ -221,6 +243,7 @@ class Tracker extends EventTarget {
 
   /** Equivalente ao reset() do sketch (botão direito do mouse). */
   reset() {
+    this.sampling = null;
     for (let i = 0; i < SEN; i++) {
       this.n[i].reset();
       this.cama[i].reset();
@@ -236,3 +259,64 @@ class Tracker extends EventTarget {
     return this.n.map((norm) => ({ min: norm.min, max: norm.max }));
   }
 }
+
+// ----------------------------------------------------------------------
+// Recalibração por eixo com o site rodando (botões − / + do HUD)
+//
+// Acréscimo nosso, não vem do sketch. Cada clique tira a MÉDIA de
+// CALIB_SAMPLES leituras cruas de um eixo e grava no min (−, mão longe
+// da placa) ou no max (+, mão encostada). Contagem crua, sem FLIP: em todo
+// eixo ela SOBE quando a mão se aproxima.
+//
+// Média e não pico, ao contrário da varredura (Normalize.note guarda o
+// extremo de ruído, o que alarga a faixa em ~ruído pico-a-pico). A média
+// de 10 leituras corta o desvio em ~3x.
+//
+// Um limite que deixaria o span abaixo de MIN_CALIBRATION_SPAN é RECUSADO
+// e a calibração anterior fica intacta — é o que acontece ao apertar +
+// com a mão longe por engano. Sem o outro limite (logo depois de
+// "Reiniciar calibração") qualquer valor é aceito.
+//
+// Eventos: "sample" com { axis, bound, mean, accepted, span } ao terminar;
+// "calibration" também, quando o limite foi aceito, para quem já escuta
+// mudanças de calibração (dica da tela inicial, portão do pedido).
+// ----------------------------------------------------------------------
+Tracker.prototype.startSampling = function (axis, bound) {
+  if (this.calibrating) return false;
+  this.sampling = { axis, bound, sum: 0, count: 0 };
+  return true;
+};
+
+Tracker.prototype.cancelSampling = function () {
+  this.sampling = null;
+};
+
+Tracker.prototype.addSample = function (value) {
+  const s = this.sampling;
+  s.sum += value;
+  s.count++;
+  if (s.count < CALIB_SAMPLES) return;
+
+  this.sampling = null;
+  const result = this.applySample(s.axis, s.bound, s.sum / s.count);
+  this.dispatchEvent(new CustomEvent("sample", { detail: result }));
+  if (result.accepted) {
+    this.dispatchEvent(new CustomEvent("calibration", { detail: this.calibrating }));
+  }
+};
+
+Tracker.prototype.applySample = function (axis, bound, mean) {
+  const norm = this.n[axis];
+  const other = bound === "max" ? norm.min : norm.max;
+  const result = { axis, bound, mean, accepted: true, span: null };
+
+  if (Number.isFinite(other)) {
+    result.span = bound === "max" ? mean - other : other - mean;
+    if (result.span < MIN_CALIBRATION_SPAN) {
+      result.accepted = false;
+      return result;
+    }
+  }
+  norm[bound] = mean;
+  return result;
+};

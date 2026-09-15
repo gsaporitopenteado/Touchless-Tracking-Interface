@@ -72,7 +72,7 @@ float totalPago = 0;
 // pelo nome no Windows (a lista sai como COM4, COM5, ...), entao isto e
 // um palpite: a tecla P percorre as portas em tempo de execucao, e se a
 // porta escolhida ficar muda o sketch cai sozinho no firmware falso.
-final int PORTA_SERIAL = 1;
+final int PORTA_SERIAL = 2;
 final int BAUD = 115200;
 final int SILENCIO_ATE_FALLBACK_MS = 4000;
 
@@ -442,6 +442,9 @@ void keyReleased() {
 // Mouse: clicar num alvo foca e confirma (fallback / acessibilidade)
 // ------------------------------------------------------------
 void mousePressed() {
+  // botoes - e + de calibracao do HUD tem prioridade sobre os alvos
+  if (cliqueBotaoCalib(mouseX, mouseY)) return;
+
   Target[][] m = nav.mapa;
   for (int r = 0; r < m.length; r++) {
     for (int c = 0; c < m[r].length; c++) {
@@ -507,6 +510,19 @@ void desenhaCabecalho() {
   ellipse(width - 44 - larg, 36, 10, 10);
 }
 
+// Geometria das caixas X/Y/Z do HUD. Compartilhada com os botoes de
+// calibracao (Calibration.pde), que se desenham e testam clique em
+// cima de cada caixa - por isso nao pode ser local de desenhaHud().
+final float HUD_BW = 132, HUD_BH = 40, HUD_GAP = 10;
+
+float hudCaixaX(int eixo) {
+  return width / 2 - (HUD_BW * 3 + HUD_GAP * 2) / 2 + eixo * (HUD_BW + HUD_GAP);
+}
+
+float hudCaixaY() {
+  return height - 52;
+}
+
 /** HUD dos eixos: mostra POR QUE o cursor esta se movendo.
  *
  *  Em controle por taxa o cursor e estado que nao se autocorrige - um
@@ -514,12 +530,11 @@ void desenhaCabecalho() {
  *  explicando. Daí o HUD. */
 void desenhaHud() {
   String[] rotulos = { "X", "Y", "Z" };
-  float bw = 132, bh = 40, gap = 10;
-  float x0 = width / 2 - (bw * 3 + gap * 2) / 2;
-  float y0 = height - 52;
+  float bw = HUD_BW, bh = HUD_BH;
+  float y0 = hudCaixaY();
 
   for (int i = 0; i < 3; i++) {
-    float x = x0 + i * (bw + gap);
+    float x = hudCaixaX(i);
     int zona = nav.zonaVisivel(i);
     boolean ativo = (zona != ZONA_NEUTRA);
     float prog = (i == 2) ? nav.progressoZ() : nav.progressoMove(i);
@@ -556,6 +571,8 @@ void desenhaHud() {
   textAlign(LEFT, CENTER);
   text("bruto  " + int(bruto[0]) + "  " + int(bruto[1]) + "  " + int(bruto[2]),
        24, y0 + bh/2 - 4);
+
+  desenhaBotoesCalib();
 }
 
 String setaDoEixo(int eixo, int zona) {
@@ -572,11 +589,12 @@ void desenhaAjuda() {
   textFont(fMono);
   float w = textWidth(t) + 24;
   noStroke();
+  // acima dos botoes - e + de calibracao (que comecam em height - 84)
   fill(255, 215);
-  rect(width/2 - w/2, height - 88, w, 24, 8);
+  rect(width/2 - w/2, height - 112, w, 24, 8);
   fill(MUTED);
   textAlign(CENTER, CENTER);
-  text(t, width/2, height - 77);
+  text(t, width/2, height - 101);
 }
 
 /** Com a barra de teclas escondida, sobra so este lembrete de canto -

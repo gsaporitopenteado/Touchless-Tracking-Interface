@@ -348,6 +348,7 @@ function paintLoop() {
   paintHudAxis("hudX", HUD_ARROWS_X[z[0]], nav.values[0], z[0], nav.moveProgress(0));
   paintHudAxis("hudY", HUD_ARROWS_Y[z[1]], nav.values[1], z[1], nav.moveProgress(1));
   paintHudAxis("hudZ", HUD_Z_LABELS[z[2]], nav.values[2], z[2], zProgress);
+  paintCalibButtons();
 
   requestAnimationFrame(paintLoop);
 }
@@ -391,7 +392,9 @@ tracker.addEventListener("frame", (e) => {
   // Durante a varredura de calibração os limites mudam a cada quadro, então
   // as zonas oscilam. Congelamos a navegação e mantemos os temporizadores
   // zerados — é isso que evita terminar a calibração já "dentro" de Z0.
-  if (snap.calibrating) {
+  // Na amostragem dos botões − / + a mão vai de propósito a um extremo,
+  // então vale o mesmo.
+  if (snap.calibrating || snap.sampling) {
     nav.reset();
     return;
   }
@@ -477,13 +480,101 @@ tracker.addEventListener("calibration", () => {
       "Limites: " +
       tracker
         .bounds()
-        .map((b, i) => AXIS_LABELS[i] + " " + b.min + "–" + b.max)
+        .map((b, i) => AXIS_LABELS[i] + " " + Math.round(b.min) + "–" + Math.round(b.max))
         .join("   ·   ");
   } else {
     hint.textContent =
       "Ainda sem calibração: segure o botão (ou a barra de espaço) e varra a mão por todo o alcance das três placas.";
   }
   updateStartGate();
+});
+
+// ---------------------------------------------------------------------
+// Botões − / + de cada eixo no HUD: recalibra um limite com o site rodando
+// (a lógica de amostragem mora no Tracker, em tracking.js)
+// ---------------------------------------------------------------------
+let toastTimer = 0;
+
+function showToast(text) {
+  const el = byId("calibToast");
+  el.textContent = text;
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    el.hidden = true;
+  }, 2400);
+}
+
+function paintCalibButtons() {
+  const enabled = anySourceConnected() && !tracker.calibrating;
+  const s = tracker.sampling;
+  const bounds = tracker.bounds();
+
+  document.querySelectorAll(".hud-cal-btn").forEach((btn) => {
+    const axis = Number(btn.dataset.axis);
+    const bound = btn.dataset.bound;
+    const active = !!s && s.axis === axis && s.bound === bound;
+
+    // o botão ativo continua clicável: clicar de novo cancela
+    btn.disabled = !enabled && !active;
+    btn.classList.toggle("sampling", active);
+    btn.style.setProperty("--progress", active ? s.count / CALIB_SAMPLES : 0);
+
+    const v = bounds[axis][bound];
+    btn.querySelector(".hud-cal-val").textContent = active
+      ? s.count + "/" + CALIB_SAMPLES
+      : Number.isFinite(v)
+        ? String(Math.round(v))
+        : bound === "max" ? "máx" : "mín";
+  });
+}
+
+document.querySelectorAll(".hud-cal-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    // Sem isto o botão fica com o foco, e a barra de espaço (que segura a
+    // calibração) ou o Enter disparariam uma nova amostragem.
+    btn.blur();
+
+    const axis = Number(btn.dataset.axis);
+    const bound = btn.dataset.bound;
+    const s = tracker.sampling;
+    const label = AXIS_LABELS[axis];
+
+    if (s && s.axis === axis && s.bound === bound) {
+      tracker.cancelSampling();
+      nav.reset();
+      showToast("Amostragem cancelada");
+      return;
+    }
+    if (s) {
+      showToast("Aguarde a amostragem de " + AXIS_LABELS[s.axis]);
+      return;
+    }
+    if (!anySourceConnected() || !tracker.startSampling(axis, bound)) return;
+
+    nav.reset();
+    showToast(
+      bound === "max"
+        ? "Mão ENCOSTADA na placa " + label + " — medindo o máximo"
+        : "Mão LONGE da placa " + label + " — medindo o mínimo"
+    );
+  });
+});
+
+tracker.addEventListener("sample", (e) => {
+  const { axis, bound, mean, accepted, span } = e.detail;
+  const name =
+    AXIS_LABELS[axis] + (bound === "max" ? " máx " : " mín ") + Math.round(mean);
+
+  if (!accepted) {
+    showToast(
+      name + " recusado: span " + Math.round(span) + " (mínimo " + MIN_CALIBRATION_SPAN + ")"
+    );
+  } else if (tracker.isCalibrated) {
+    showToast(name + " — calibrado");
+  } else {
+    showToast(name + " — calibração ainda incompleta");
+  }
 });
 
 byId("btnResetCalib").addEventListener("click", () => {
@@ -535,7 +626,7 @@ function updateStartGate() {
     hint.textContent = "Conecte o Arduino ou ative o firmware falso para continuar.";
   } else if (!tracker.isCalibrated) {
     hint.textContent =
-      "Falta calibrar: segure Definir limites e varra a mão pelas três placas.";
+      "Falta calibrar: segure Definir limites e varra a mão pelas três placas (ou use − e + de cada eixo, no topo).";
   } else {
     hint.textContent = "Pronto! Abaixe a mão sobre a placa Z (ou clique) para iniciar.";
   }
