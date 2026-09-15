@@ -2,8 +2,20 @@
  * app.js — Fit Express
  * ----------------------------------------------------------------------
  * Controlador da interface: telas (início → cardápio → revisão →
- * pagamento → confirmação), cursor do cardápio movido pelos eventos do
- * Arduino (moveH/moveV/gesture vindos de serial.js), carrinho e checkout.
+ * pagamento → confirmação), carrinho e checkout.
+ *
+ * O firmware original (_3DInterface.ino) só manda os 3 valores brutos por
+ * linha ("x y z\n") — a calibração (min/max por eixo) e a conversão para
+ * posição discreta (getPosition, 0/1/2 por eixo) acontecem aqui, usando os
+ * mesmos algoritmos do sketch Processing original (ver sensors.js).
+ *
+ * Mapeamento posição → grade do cardápio (3x3), conforme a especificação:
+ *   eixo X: posição 0 (X<10) = direita | 1 = parado | 2 (X>20) = esquerda
+ *   eixo Y: posição 0 (Y<10) = cima    | 1 = parado | 2 (Y>20) = baixo
+ *   eixo Z: posição 0 (Z<10) = desseleciona | 1 = nada | 2 (Z>20) = seleciona
+ * Como X e Y já chegam como uma posição absoluta de 0 a 2 (mesma ideia do
+ * ixyz[] do TicTacToe3D.pde), o cursor do cardápio é posicionado
+ * diretamente na grade 3x3, sem precisar de "passos" incrementais.
  * ----------------------------------------------------------------------
  */
 
@@ -38,6 +50,28 @@ const state = {
 };
 
 const link = new ArduinoLink();
+
+// Um AxisPipeline por eixo: Normalize (calibração min/max) + MomentumAverage
+// (suavização) + getPosition (zona discreta 0/1/2). Ver sensors.js.
+const axisX = new AxisPipeline(0.15);
+const axisY = new AxisPipeline(0.15);
+const axisZ = new AxisPipeline(0.15);
+
+// Calibração FIXA (definida em calibration-config.js, obtida rodando o
+// utilitário Processing em /calibration-tool/). Não há calibração ao vivo
+// nesta branch — para recalibrar, rode o utilitário de novo e atualize
+// FIXED_CALIBRATION.
+axisX.normalize.setRange(FIXED_CALIBRATION.x.min, FIXED_CALIBRATION.x.max);
+axisY.normalize.setRange(FIXED_CALIBRATION.y.min, FIXED_CALIBRATION.y.max);
+axisZ.normalize.setRange(FIXED_CALIBRATION.z.min, FIXED_CALIBRATION.z.max);
+
+let prevPosZ = 1; // começa na zona morta, para não disparar gesto ao ligar
+
+document.getElementById("fixedCalibrationHint").textContent =
+  `Calibração fixa carregada: X ${FIXED_CALIBRATION.x.min}–${FIXED_CALIBRATION.x.max} · ` +
+  `Y ${FIXED_CALIBRATION.y.min}–${FIXED_CALIBRATION.y.max} · ` +
+  `Z ${FIXED_CALIBRATION.z.min}–${FIXED_CALIBRATION.z.max} ` +
+  `(edite web/calibration-config.js para recalibrar)`;
 
 // ---------------------------------------------------------------------
 // Utilidades
@@ -179,30 +213,46 @@ function moveCursor(dir) {
 }
 
 // ---------------------------------------------------------------------
-// Painel de depuração dos sensores (barras X/Y/Z)
+// Painel de depuração dos sensores (normalizado 0..1 + bruto)
 // ---------------------------------------------------------------------
-function updateSensorDebug(x, y, z) {
+function updateSensorDebug(raw, norm) {
   const barX = document.getElementById("barX");
-  const barY = document.getElementById("barY");
-  const barZ = document.getElementById("barZ");
   if (!barX) return; // painel só existe na tela de cardápio
-  barX.value = x; document.getElementById("valX").textContent = x.toFixed(1);
-  barY.value = y; document.getElementById("valY").textContent = y.toFixed(1);
-  barZ.value = z; document.getElementById("valZ").textContent = z.toFixed(1);
+
+  barX.value = norm.x; document.getElementById("valX").textContent = norm.x.toFixed(2);
+  document.getElementById("barY").value = norm.y; document.getElementById("valY").textContent = norm.y.toFixed(2);
+  document.getElementById("barZ").value = norm.z; document.getElementById("valZ").textContent = norm.z.toFixed(2);
+  document.getElementById("sensorRaw").textContent =
+    `bruto: x=${raw.x} y=${raw.y} z=${raw.z}`;
 }
 
 // ---------------------------------------------------------------------
-// Eventos vindos do Arduino (via serial.js)
+// Eventos vindos do Arduino (via serial.js): {x, y, z} brutos
 // ---------------------------------------------------------------------
-function handleSensorFrame(data) {
-  if (typeof data.x === "number") {
-    updateSensorDebug(data.x, data.y, data.z);
-  }
-  if (data.moveH && data.moveH !== "NONE") moveCursor(data.moveH);
-  if (data.moveV && data.moveV !== "NONE") moveCursor(data.moveV);
+function handleSensorFrame(raw) {
+  const posX = axisX.update(raw.x);
+  const posY = axisY.update(raw.y);
+  const posZ = axisZ.update(raw.z);
 
-  if (data.gesture === "SELECT") addToCart(currentItem().id);
-  else if (data.gesture === "DESELECT") removeFromCart(currentItem().id);
+  updateSensorDebug(raw, {
+    x: axisX.average.avg,
+    y: axisY.average.avg,
+    z: axisZ.average.avg,
+  });
+
+  // X/Y chegam como posição absoluta 0/1/2 -> cursor direto na grade 3x3
+  if (state.screen === "menu") {
+    state.cursorCol = (GRID_COLS - 1) - posX; // X<10(pos0)=direita -> col mais à direita
+    state.cursorRow = posY;                    // Y<10(pos0)=cima   -> linha de cima
+    renderMenu();
+  }
+
+  // Z dispara por borda (uma vez por cruzamento de zona), não a cada frame
+  if (posZ !== prevPosZ) {
+    if (posZ === 2) addToCart(currentItem().id); // Z > 20: seleciona
+    else if (posZ === 0) removeFromCart(currentItem().id); // Z < 10: desseleciona
+  }
+  prevPosZ = posZ;
 }
 
 link.addEventListener("data", (e) => handleSensorFrame(e.detail));
@@ -236,16 +286,34 @@ function setSensorStatus(kind, text) {
 }
 
 // ---------------------------------------------------------------------
-// Modo simulação por teclado (setas = mover cursor, espaço = selecionar,
-// backspace = desselecionar) — útil para testar sem o Arduino conectado.
+// Modo simulação por teclado — útil para testar sem o Arduino conectado.
+// Esquema (consistente nas 4 telas do fluxo de pedido):
+//   setas   -> mover cursor (Cardápio) / trocar forma de pagamento (Pagamento)
+//   espaço  -> adicionar item destacado (simula Z > 20)          [Cardápio]
+//   backspace -> remover item destacado (simula Z < 10)          [Cardápio]
+//              -> voltar para a tela anterior                    [Revisão/Pagamento]
+//   enter   -> avançar / confirmar a ação principal da tela      [todas]
 // ---------------------------------------------------------------------
+const PAYMENT_METHODS = ["credito", "debito", "pix", "dinheiro"];
+
+function cyclePaymentMethod(delta) {
+  const currentIndex = PAYMENT_METHODS.indexOf(state.paymentMethod);
+  const nextIndex =
+    currentIndex === -1
+      ? 0
+      : (currentIndex + delta + PAYMENT_METHODS.length) % PAYMENT_METHODS.length;
+  state.paymentMethod = PAYMENT_METHODS[nextIndex];
+  renderPayment();
+}
+
 document.getElementById("chkSimMode").addEventListener("change", (e) => {
   state.simMode = e.target.checked;
   if (state.simMode) {
     setSensorStatus("sim", "Modo simulação (teclado) ativo");
     document.getElementById("btnStartOrder").disabled = false;
     document.getElementById("startHint").textContent =
-      "Modo simulação ativo: use as setas, espaço (adicionar) e backspace (remover).";
+      "Modo simulação ativo: setas movem/escolhem, espaço adiciona, " +
+      "backspace remove ou volta, enter avança ou confirma.";
   } else if (!link.isConnected) {
     setSensorStatus("offline", "Arduino desconectado");
     document.getElementById("btnStartOrder").disabled = true;
@@ -253,22 +321,57 @@ document.getElementById("chkSimMode").addEventListener("change", (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
-  if (!state.simMode || state.screen !== "menu") return;
-  const keyMap = {
-    ArrowLeft: "LEFT",
-    ArrowRight: "RIGHT",
-    ArrowUp: "UP",
-    ArrowDown: "DOWN",
-  };
-  if (keyMap[e.key]) {
+  if (!state.simMode) return;
+
+  if (state.screen === "menu") {
+    const keyMap = { ArrowLeft: "LEFT", ArrowRight: "RIGHT", ArrowUp: "UP", ArrowDown: "DOWN" };
+    if (keyMap[e.key]) {
+      e.preventDefault();
+      moveCursor(keyMap[e.key]);
+    } else if (e.key === " ") {
+      e.preventDefault();
+      addToCart(currentItem().id);
+    } else if (e.key === "Backspace") {
+      e.preventDefault();
+      removeFromCart(currentItem().id);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (cartEntries().length > 0) showScreen("review"); // = clicar em "Concluir Pedido"
+    }
+    return;
+  }
+
+  if (state.screen === "review") {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      showScreen("payment"); // = "Prosseguir para Pagamento"
+    } else if (e.key === "Backspace") {
+      e.preventDefault();
+      showScreen("menu"); // = "Voltar ao Cardápio"
+    }
+    return;
+  }
+
+  if (state.screen === "payment") {
+    if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      e.preventDefault();
+      cyclePaymentMethod(-1);
+    } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+      e.preventDefault();
+      cyclePaymentMethod(1);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      confirmPurchase(); // = "Concluir Compra" (só age se já houver método escolhido)
+    } else if (e.key === "Backspace") {
+      e.preventDefault();
+      showScreen("review"); // = "Voltar"
+    }
+    return;
+  }
+
+  if (state.screen === "confirmation" && e.key === "Enter") {
     e.preventDefault();
-    moveCursor(keyMap[e.key]);
-  } else if (e.key === " ") {
-    e.preventDefault();
-    addToCart(currentItem().id);
-  } else if (e.key === "Backspace") {
-    e.preventDefault();
-    removeFromCart(currentItem().id);
+    startNewOrder(); // = "Novo Pedido"
   }
 });
 
@@ -296,18 +399,22 @@ document.querySelectorAll(".payment-option").forEach((btn) => {
   });
 });
 
-document.getElementById("btnConfirmPurchase").addEventListener("click", () => {
+function confirmPurchase() {
+  if (!state.paymentMethod) return;
   const orderNumber = String(Math.floor(100 + Math.random() * 900));
   document.getElementById("orderNumber").textContent = orderNumber;
   document.getElementById("confirmationList").innerHTML = document.getElementById("reviewList").innerHTML;
   document.getElementById("confirmationTotal").textContent = formatBRL(cartTotal());
   showScreen("confirmation");
-});
+}
 
-document.getElementById("btnNewOrder").addEventListener("click", () => {
+function startNewOrder() {
   state.cart = {};
   state.paymentMethod = null;
   state.cursorRow = 0;
   state.cursorCol = 0;
   showScreen("start");
-});
+}
+
+document.getElementById("btnConfirmPurchase").addEventListener("click", confirmPurchase);
+document.getElementById("btnNewOrder").addEventListener("click", startNewOrder);

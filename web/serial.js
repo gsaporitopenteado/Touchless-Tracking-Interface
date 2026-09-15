@@ -1,13 +1,17 @@
 /**
  * serial.js
  * ----------------------------------------------------------------------
- * Wrapper fino sobre a Web Serial API para conversar com o firmware do
- * Arduino (ver /firmware/touchless_interface/touchless_interface.ino).
+ * Wrapper fino sobre a Web Serial API para conversar com o firmware
+ * ORIGINAL e NÃO modificado do Arduino (ver /firmware/_3DInterface/).
  *
- * O firmware envia uma linha JSON por ciclo (~30ms):
- *   {"x":18.4,"y":9.2,"z":24.7,"moveH":"RIGHT","moveV":"NONE","gesture":"SELECT"}
+ * Esse firmware manda uma linha de texto por ciclo, com os 3 valores
+ * brutos do timer capacitivo separados por espaço (sem JSON):
  *
- * Linhas de depuração/calibração começam com '#' e são ignoradas aqui.
+ *     "1234 5678 910\n"
+ *
+ * A normalização/calibração desses valores brutos (min/max por eixo) e a
+ * conversão para posição discreta acontecem em sensors.js — este arquivo
+ * só entrega {x, y, z} brutos para quem estiver ouvindo o evento "data".
  *
  * Requisitos do navegador: Chrome/Edge (desktop) com Web Serial API,
  * servido via http://localhost ou https:// (contexto seguro).
@@ -105,17 +109,16 @@ class ArduinoLink extends EventTarget {
   }
 
   _handleLine(line) {
-    if (line.startsWith("#")) {
-      this.dispatchEvent(new CustomEvent("debug", { detail: line }));
-      return;
-    }
-    if (!line.startsWith("{")) return;
+    // formato esperado: "<int> <int> <int>" (x y z brutos, nessa ordem —
+    // pinos 8/9/10 no firmware original)
+    const parts = line.split(/\s+/);
+    if (parts.length !== 3) return;
 
-    try {
-      const data = JSON.parse(line);
-      this.dispatchEvent(new CustomEvent("data", { detail: data }));
-    } catch (err) {
-      // linha corrompida (comum ao conectar no meio de um frame) — ignora
-    }
+    const x = Number(parts[0]);
+    const y = Number(parts[1]);
+    const z = Number(parts[2]);
+    if (Number.isNaN(x) || Number.isNaN(y) || Number.isNaN(z)) return;
+
+    this.dispatchEvent(new CustomEvent("data", { detail: { x, y, z } }));
   }
 }
