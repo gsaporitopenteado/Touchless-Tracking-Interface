@@ -344,3 +344,94 @@ html, body {
   border-color: var(--amber-500);
   transform: translateY(-3px);
 }
+
+/* ---------------------------------------------------------------------
+   Navegação por taxa (navigation.js): HUD de direção no header,
+   destaque de foco em qualquer alvo e barra de permanência (dwell).
+   --------------------------------------------------------------------- */
+
+/* ---- HUD: mostra POR QUE o cursor está se movendo ---- */
+.nav-hud {
+  display: flex;
+  gap: 14px;
+  margin-left: auto;
+  margin-right: 18px;
+}
+.hud-axis {
+  display: grid;
+  grid-template-columns: auto auto auto;
+  grid-template-areas:
+    "label dir val"
+    "bar   bar bar";
+  gap: 2px 6px;
+  align-items: center;
+  padding: 5px 9px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  color: #a8cbb8;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.hud-axis.active {
+  background: var(--amber-500);
+  color: #3a2a06;
+}
+.hud-label { grid-area: label; font-weight: 700; letter-spacing: 0.06em; }
+.hud-dir   { grid-area: dir; font-size: 13px; }
+.hud-val   { grid-area: val; font-variant-numeric: tabular-nums; opacity: 0.75; }
+.hud-bar {
+  grid-area: bar;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.18);
+  overflow: hidden;
+}
+.hud-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: currentColor;
+}
+
+/* ---- foco: o mesmo destaque para item, botão ou forma de pagamento ---- */
+.cursor {
+  position: relative;
+  overflow: hidden;
+}
+.btn.cursor,
+.payment-option.cursor {
+  box-shadow: 0 0 0 3px rgba(242, 169, 60, 0.55);
+}
+.payment-option.cursor {
+  border-color: var(--amber-500);
+}
+
+/* ---- barra de permanência: preenche durante DWELL_Z_MS ---- */
+.cursor::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 4px;
+  width: calc(var(--dwell, 0) * 100%);
+  background: transparent;
+  pointer-events: none;
+}
+.cursor.dwell-confirm::after   { background: var(--green-600); }
+.cursor.dwell-secondary::after { background: var(--red-500); }
+
+@media (max-width: 900px) {
+  .nav-hud { display: none; }
+}
+
+/* ---------------------------------------------------------------------
+   Última linha das listas: sem borda inferior.
+   O total logo abaixo já traz `border-top: 2px`, então manter a borda do
+   último <li> desenhava duas linhas quase juntas.
+   Vale para a revisão, a confirmação (mesma classe) e o painel do
+   carrinho no cardápio, que tem o mesmo par lista + total.
+   --------------------------------------------------------------------- */
+.review-list li:last-child,
+.cart-list li:last-child {
+  border-bottom: none;
+}

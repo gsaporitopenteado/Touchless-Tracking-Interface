@@ -9,6 +9,26 @@
 <body>
   <header class="app-header">
     <div class="brand">🥗 <span>Fit Express</span></div>
+    <div class="nav-hud" id="navHud">
+      <span class="hud-axis" id="hudX">
+        <span class="hud-label">X</span>
+        <span class="hud-dir">■</span>
+        <span class="hud-val">0.00</span>
+        <span class="hud-bar"><span class="hud-fill"></span></span>
+      </span>
+      <span class="hud-axis" id="hudY">
+        <span class="hud-label">Y</span>
+        <span class="hud-dir">■</span>
+        <span class="hud-val">0.00</span>
+        <span class="hud-bar"><span class="hud-fill"></span></span>
+      </span>
+      <span class="hud-axis" id="hudZ">
+        <span class="hud-label">Z</span>
+        <span class="hud-dir">—</span>
+        <span class="hud-val">0.00</span>
+        <span class="hud-bar"><span class="hud-fill"></span></span>
+      </span>
+    </div>
     <div class="sensor-status" id="sensorStatus">
       <span class="dot" id="sensorDot"></span>
       <span id="sensorStatusText">Arduino desconectado</span>
@@ -42,7 +62,7 @@
           <button class="btn btn-primary" id="btnConnect">🔌 Conectar ao Arduino</button>
           <label class="sim-toggle">
             <input type="checkbox" id="chkSimMode" />
-            Firmware falso (teclado: ←→ eixo X, ↑↓ eixo Y, w/s eixo Z)
+            Firmware falso (teclado: ←→ move X, ↑↓ move Y, s confirma / w volta)
           </label>
         </div>
 
@@ -161,6 +181,7 @@
   <script src="serial.js"></script>
   <script src="fake-firmware.js"></script>
   <script src="tracking.js"></script>
+  <script src="navigation.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

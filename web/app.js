@@ -1,24 +1,21 @@
 /**
  * app.js — Fit Express
  * ----------------------------------------------------------------------
- * Controlador da interface: telas (início → cardápio → revisão →
- * pagamento → confirmação), carrinho e checkout.
+ * Telas (início → cardápio → revisão → pagamento → confirmação),
+ * carrinho e checkout.
  *
- * O que mudou em relação à versão anterior: o cursor NÃO é mais movido
- * por eventos de passo vindos do firmware (`moveH: "RIGHT"`). O firmware
- * real (arduino/totem/totem.ino) não emite nada disso — ele só manda três
- * contagens brutas. Quem transforma isso em posição é tracking.js, o
- * porte do sketch Processing, e ele devolve uma posição ABSOLUTA na
- * grade 3x3x3 (`ixyz`). Então o cursor é atribuído, não incrementado.
+ * A navegação por gestos vive em navigation.js (controle por TAXA): os
+ * eixos são comandos de movimento, não coordenadas. Aqui só declaramos,
+ * por tela, um MAPA DE FOCO — linhas de alvos focáveis — e o motor cuida
+ * de mover, repetir, confirmar e voltar. Consequência prática: a tela de
+ * pagamento passou a ter navegação sem uma linha de código específica.
  *
- *   ixyz[0] (X) -> coluna  (movimento horizontal na tela)
- *   ixyz[1] (Y) -> linha   (movimento vertical na tela)
- *   ixyz[2] (Z) -> confirmar / cancelar
+ * tracking.js (a matemática portada do Processing) não foi tocada.
  * ----------------------------------------------------------------------
  */
 
 // ---------------------------------------------------------------------
-// Dados do cardápio (grade 3x3 — combina com a lógica de cursor 2D)
+// Dados do cardápio
 // ---------------------------------------------------------------------
 const MENU_ITEMS = [
   { id: "quinoa-bowl", emoji: "🥣", name: "Bowl de Quinoa com Frango", price: 24.9 },
@@ -35,39 +32,30 @@ const MENU_ITEMS = [
 const GRID_COLS = 3;
 const GRID_ROWS = 3;
 
-// Z: qual índice da grade significa o quê. O eixo Z não é invertido
-// (FLIP[2] === false), e o pipeline devolve 0 quando a mão está PERTO da
-// placa. Abaixar a mão sobre a placa Z = confirmar, levantar = cancelar,
-// exatamente como descrito no README original.
-const Z_CONFIRM_INDEX = 0;
-const Z_CANCEL_INDEX = 2;
-// Quantos quadros a mão precisa ficar na zona antes do evento disparar.
-// A ~10 Hz do totem.ino, 3 quadros = ~300 ms — o suficiente para não
-// disparar quando a mão só passa pela zona a caminho de outra.
-const Z_DWELL_FRAMES = 3;
-
 // ---------------------------------------------------------------------
 // Estado global
 // ---------------------------------------------------------------------
 const state = {
   screen: "start",
-  cursorRow: 0,
-  cursorCol: 0,
   cart: {},        // { itemId: qty }
   paymentMethod: null,
-  paymentFocus: 0, // forma de pagamento em foco (navegação por X/Y)
   simMode: false,
 };
 
 const link = new ArduinoLink();       // hardware real, via Web Serial
 const fake = new FakeArduinoLink();   // firmware falso, via teclado
-const tracker = new Tracker();        // porte do pipeline do Processing
+const tracker = new Tracker();        // pipeline portado do Processing
+const nav = new Navigator();          // navegação por taxa
 
 // ---------------------------------------------------------------------
 // Utilidades
 // ---------------------------------------------------------------------
 const formatBRL = (value) =>
   value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+function byId(id) {
+  return document.getElementById(id);
+}
 
 function cartEntries() {
   return Object.entries(state.cart)
@@ -79,14 +67,128 @@ function cartTotal() {
   return cartEntries().reduce((sum, { item, qty }) => sum + item.price * qty, 0);
 }
 
-function currentItem() {
-  const index = state.cursorRow * GRID_COLS + state.cursorCol;
-  return MENU_ITEMS[index];
+// =====================================================================
+// MAPAS DE FOCO
+// =====================================================================
+// Cada tela é uma matriz de linhas de alvos. O motor move com clamp nas
+// bordas (sem ciclo) e aceita diagonal quando X e Y saem do centro juntos.
+
+/** Alvo de botão simples. */
+function buttonTarget(key, elementId, confirm) {
+  return { key, element: () => byId(elementId), confirm, secondary: null };
 }
 
-function paymentButtons() {
-  return Array.from(document.querySelectorAll(".payment-option"));
+/**
+ * Alvo de item do cardápio: Z0 adiciona, Z2 remove uma unidade.
+ *
+ * `secondary()` devolve `true` quando de fato desfez algo. É isso que
+ * permite a regra única do Z2 (ver `nav.onSecondary`): item com
+ * quantidade 0 não tem o que desfazer, então devolve `false`.
+ */
+function itemTarget(index) {
+  const item = MENU_ITEMS[index];
+  const key = "item-" + item.id;
+  return {
+    key,
+    element: () => document.querySelector('[data-focus-key="' + key + '"]'),
+    confirm: () => addToCart(item.id),
+    secondary: () => removeFromCart(item.id),
+  };
 }
+
+/**
+ * Alvo de forma de pagamento: Z0 escolhe, Z2 desmarca.
+ *
+ * O Z2 é **escopo do alvo**, igual ao do cardápio: ele só desmarca a forma
+ * que está em foco. Apontando para uma forma que não é a escolhida não há
+ * nada a desfazer *neste alvo* — devolve `false` e o Z2 vira "voltar".
+ * Antes isto era escopo de tela, então Z2 apontando para o Pix limpava o
+ * Crédito: agia sobre um alvo que não estava sendo apontado.
+ */
+function paymentTarget(method) {
+  const key = "pay-" + method;
+  return {
+    key,
+    element: () =>
+      document.querySelector('.payment-option[data-method="' + method + '"]'),
+    confirm: () => {
+      state.paymentMethod = method;
+      renderPayment();
+    },
+    secondary: () => {
+      if (state.paymentMethod !== method) return false;
+      state.paymentMethod = null;
+      renderPayment(); // reflete o desmarque e volta a bloquear Concluir Compra
+      return true;
+    },
+  };
+}
+
+// "Concluir Pedido" ocupa a 4ª coluna inteira — a MESMA referência nas 3
+// linhas. Assim a linha de origem é lembrada de graça: saindo de [1][3]
+// para a esquerda você volta para [1][2], sem nenhum `lastRow` guardado.
+const TARGET_FINISH = buttonTarget("finish", "btnFinishOrder", () => {
+  if (cartEntries().length > 0) showScreen("review");
+});
+
+function menuMap() {
+  const rows = [];
+  for (let r = 0; r < GRID_ROWS; r++) {
+    const row = [];
+    for (let c = 0; c < GRID_COLS; c++) row.push(itemTarget(r * GRID_COLS + c));
+    row.push(TARGET_FINISH);
+    rows.push(row);
+  }
+  return rows;
+}
+
+const FOCUS_MAPS = {
+  start: () => [
+    [
+      buttonTarget("start-order", "btnStartOrder", () => {
+        if (!byId("btnStartOrder").disabled) showScreen("menu");
+      }),
+    ],
+  ],
+
+  menu: menuMap,
+
+  review: () => [
+    [
+      buttonTarget("back-menu", "btnBackToMenu", () => showScreen("menu")),
+      buttonTarget("to-payment", "btnGoToPayment", () => showScreen("payment")),
+    ],
+  ],
+
+  // 2x2 de formas de pagamento + uma linha de ações: 3 linhas x 2 colunas.
+  payment: () => [
+    [paymentTarget("credito"), paymentTarget("debito")],
+    [paymentTarget("pix"), paymentTarget("dinheiro")],
+    [
+      buttonTarget("back-review", "btnBackToReview", () => showScreen("review")),
+      buttonTarget("confirm-purchase", "btnConfirmPurchase", confirmPurchase),
+    ],
+  ],
+
+  confirmation: () => [
+    [buttonTarget("new-order", "btnNewOrder", startNewOrder)],
+  ],
+};
+
+/** Foco inicial por tela: o cardápio começa no centro da grade. */
+const INITIAL_FOCUS = {
+  menu: { row: 1, col: 1 },
+};
+
+/**
+ * Para onde o Z2 "volta" em cada tela, quando o alvo focado não tinha nada
+ * a desfazer. Telas ausentes daqui simplesmente não têm voltar (o cardápio
+ * é o início do pedido; a confirmação já fechou a compra).
+ */
+const SCREEN_BACK = {
+  review: () => showScreen("menu"),
+  payment: () => showScreen("review"),
+};
 
 // ---------------------------------------------------------------------
 // Navegação entre telas
@@ -96,25 +198,31 @@ function showScreen(name) {
   document.querySelectorAll(".screen").forEach((el) => {
     el.hidden = el.dataset.screen !== name;
   });
+
+  const build = FOCUS_MAPS[name];
+  nav.setMap(build ? build() : [[]], INITIAL_FOCUS[name]);
+
   if (name === "menu") renderMenu();
   if (name === "review") renderReview();
   if (name === "payment") renderPayment();
+
+  paintFocus();
 }
 
 // ---------------------------------------------------------------------
 // Renderização: Cardápio
 // ---------------------------------------------------------------------
 function renderMenu() {
-  const grid = document.getElementById("menuGrid");
+  const grid = byId("menuGrid");
   grid.innerHTML = "";
 
-  MENU_ITEMS.forEach((item, index) => {
-    const row = Math.floor(index / GRID_COLS);
-    const col = index % GRID_COLS;
+  MENU_ITEMS.forEach((item) => {
     const qty = state.cart[item.id] || 0;
-
     const card = document.createElement("div");
-    card.className = "menu-item" + (row === state.cursorRow && col === state.cursorCol ? " cursor" : "");
+    card.className = "menu-item";
+    // key estável: o destaque é aplicado por paintFocus(), não aqui, para
+    // que re-renderizar a grade não perca o foco.
+    card.dataset.focusKey = "item-" + item.id;
     card.innerHTML = `
       ${qty > 0 ? `<span class="qty-badge">${qty}</span>` : ""}
       <div class="emoji">${item.emoji}</div>
@@ -123,18 +231,18 @@ function renderMenu() {
     `;
     // clique com o mouse também funciona (acessibilidade / fallback)
     card.addEventListener("click", () => {
-      state.cursorRow = row;
-      state.cursorCol = col;
+      nav.focusKey("item-" + item.id);
       addToCart(item.id);
     });
     grid.appendChild(card);
   });
 
   renderCartPanel();
+  paintFocus(); // o innerHTML acima destruiu o destaque anterior
 }
 
 function renderCartPanel() {
-  const list = document.getElementById("cartList");
+  const list = byId("cartList");
   const entries = cartEntries();
 
   list.innerHTML = entries.length
@@ -147,146 +255,103 @@ function renderCartPanel() {
         .join("")
     : `<li class="cart-empty">Nenhum item selecionado ainda</li>`;
 
-  document.getElementById("cartTotal").textContent = formatBRL(cartTotal());
-  document.getElementById("btnFinishOrder").disabled = entries.length === 0;
+  byId("cartTotal").textContent = formatBRL(cartTotal());
+  byId("btnFinishOrder").disabled = entries.length === 0;
 }
 
 // ---------------------------------------------------------------------
 // Renderização: Revisão
 // ---------------------------------------------------------------------
 function renderReview() {
-  const list = document.getElementById("reviewList");
-  list.innerHTML = cartEntries()
+  byId("reviewList").innerHTML = cartEntries()
     .map(
       ({ item, qty }) => `
       <li><span>${qty}x ${item.name}</span><span>${formatBRL(item.price * qty)}</span></li>
     `
     )
     .join("");
-  document.getElementById("reviewTotal").textContent = formatBRL(cartTotal());
+  byId("reviewTotal").textContent = formatBRL(cartTotal());
 }
 
 // ---------------------------------------------------------------------
 // Renderização: Pagamento
 // ---------------------------------------------------------------------
 function renderPayment() {
-  document.getElementById("paymentTotal").textContent = formatBRL(cartTotal());
-  paymentButtons().forEach((btn, i) => {
+  byId("paymentTotal").textContent = formatBRL(cartTotal());
+  document.querySelectorAll(".payment-option").forEach((btn) => {
     btn.classList.toggle("selected", btn.dataset.method === state.paymentMethod);
-    btn.classList.toggle("cursor", i === state.paymentFocus);
   });
-  document.getElementById("btnConfirmPurchase").disabled = !state.paymentMethod;
+  byId("btnConfirmPurchase").disabled = !state.paymentMethod;
 }
 
 // ---------------------------------------------------------------------
-// Ações do carrinho (disparadas pelo gesto Z ou por clique)
+// Ações do carrinho
 // ---------------------------------------------------------------------
 function addToCart(itemId) {
   state.cart[itemId] = (state.cart[itemId] || 0) + 1;
   if (state.screen === "menu") renderMenu();
 }
 
+/** @returns {boolean} true se realmente removeu uma unidade. */
 function removeFromCart(itemId) {
-  if (!state.cart[itemId]) return;
+  if (!state.cart[itemId]) return false;
   state.cart[itemId] -= 1;
   if (state.cart[itemId] <= 0) delete state.cart[itemId];
   if (state.screen === "menu") renderMenu();
+  return true;
 }
 
-// ---------------------------------------------------------------------
-// X / Y -> posição absoluta na tela
-// ---------------------------------------------------------------------
-function applyPosition(ixyz) {
-  const ix = ixyz[0];
-  const iy = ixyz[1];
-
-  if (state.screen === "menu") {
-    const col = Math.min(GRID_COLS - 1, ix);
-    const row = Math.min(GRID_ROWS - 1, iy);
-    if (col === state.cursorCol && row === state.cursorRow) return;
-    state.cursorCol = col;
-    state.cursorRow = row;
-    renderMenu();
-    return;
-  }
-
-  if (state.screen === "payment") {
-    // 4 formas de pagamento numa grade 2x2: as três posições de cada eixo
-    // são achatadas para duas (o índice 2 cai no 1).
-    const col = Math.min(1, ix);
-    const row = Math.min(1, iy);
-    const focus = row * 2 + col;
-    if (focus === state.paymentFocus) return;
-    state.paymentFocus = focus;
-    renderPayment();
-  }
+// =====================================================================
+// Destaque do foco + indicador de permanência (dwell)
+// =====================================================================
+function paintFocus() {
+  document.querySelectorAll(".cursor").forEach((el) => {
+    el.classList.remove("cursor", "dwell-confirm", "dwell-secondary");
+    el.style.removeProperty("--dwell");
+  });
+  const target = nav.focused();
+  const el = target && target.element ? target.element() : null;
+  if (el) el.classList.add("cursor");
 }
 
-// ---------------------------------------------------------------------
-// Z -> confirmar / cancelar, com detecção de borda + permanência
-// ---------------------------------------------------------------------
-let zZone = 1;
-let zFrames = 0;
-let zFired = false;
+const HUD_ARROWS_X = ["◀", "■", "▶"];
+const HUD_ARROWS_Y = ["▲", "■", "▼"];
+const HUD_Z_LABELS = ["confirmar", "—", "voltar"];
 
-function handleZ(iz) {
-  if (iz !== zZone) {
-    zZone = iz;
-    zFrames = 0;
-    zFired = false;
-  }
-  zFrames++;
-
-  if (zZone !== Z_CONFIRM_INDEX && zZone !== Z_CANCEL_INDEX) return; // zona neutra
-  if (zFired || zFrames < Z_DWELL_FRAMES) return;
-
-  zFired = true;
-  if (zZone === Z_CONFIRM_INDEX) onConfirm();
-  else onCancel();
+function paintHudAxis(id, glyph, value, zone, progress) {
+  const box = byId(id);
+  if (!box) return;
+  box.querySelector(".hud-dir").textContent = glyph;
+  box.querySelector(".hud-val").textContent = value.toFixed(2);
+  box.querySelector(".hud-fill").style.width = (progress * 100).toFixed(1) + "%";
+  box.classList.toggle("active", zone !== 1);
 }
 
-function onConfirm() {
-  switch (state.screen) {
-    case "start":
-      if (!document.getElementById("btnStartOrder").disabled) showScreen("menu");
-      break;
-    case "menu":
-      addToCart(currentItem().id);
-      break;
-    case "review":
-      showScreen("payment");
-      break;
-    case "payment": {
-      const btn = paymentButtons()[state.paymentFocus];
-      if (!btn) break;
-      // Primeiro confirm escolhe a forma de pagamento; confirmar de novo
-      // sobre a forma já escolhida fecha a compra.
-      if (state.paymentMethod === btn.dataset.method) confirmPurchase();
-      else {
-        state.paymentMethod = btn.dataset.method;
-        renderPayment();
-      }
-      break;
-    }
-    case "confirmation":
-      newOrder();
-      break;
-  }
-}
+/**
+ * Loop de pintura separado do loop de dados: o Arduino manda ~10 quadros
+ * por segundo, o que faria a barra de dwell andar aos saltos de 100ms.
+ * A lógica continua rodando só nos quadros do sensor; aqui só desenhamos.
+ */
+function paintLoop() {
+  const stale = nav.isStale;
+  const zProgress = nav.zProgress();
 
-function onCancel() {
-  switch (state.screen) {
-    case "menu":
-      removeFromCart(currentItem().id);
-      break;
-    case "review":
-      showScreen("menu");
-      break;
-    case "payment":
-      showScreen("review");
-      break;
+  const target = nav.focused();
+  const el = target && target.element ? target.element() : null;
+  if (el) {
+    el.style.setProperty("--dwell", zProgress);
+    el.classList.toggle("dwell-confirm", zProgress > 0 && nav.zones[2] === 0);
+    el.classList.toggle("dwell-secondary", zProgress > 0 && nav.zones[2] === 2);
   }
+
+  const z = stale ? [1, 1, 1] : nav.zones;
+  paintHudAxis("hudX", HUD_ARROWS_X[z[0]], nav.values[0], z[0], nav.moveProgress(0));
+  paintHudAxis("hudY", HUD_ARROWS_Y[z[1]], nav.values[1], z[1], nav.moveProgress(1));
+  paintHudAxis("hudZ", HUD_Z_LABELS[z[2]], nav.values[2], z[2], zProgress);
+
+  requestAnimationFrame(paintLoop);
 }
+requestAnimationFrame(paintLoop);
 
 // ---------------------------------------------------------------------
 // Painel de depuração dos sensores
@@ -295,47 +360,79 @@ const AXIS_LABELS = ["X", "Y", "Z"];
 
 function updateSensorDebug(snap) {
   AXIS_LABELS.forEach((axis, i) => {
-    // barra do cardápio (o progress do HTML original tem max="30")
-    const bar = document.getElementById("bar" + axis);
+    const bar = byId("bar" + axis);
     if (bar) {
-      bar.value = snap.smooth[i] * 30;
-      document.getElementById("val" + axis).textContent = snap.smooth[i].toFixed(2);
+      bar.value = snap.smooth[i] * 30; // o progress do HTML tem max="30"
+      byId("val" + axis).textContent = snap.smooth[i].toFixed(2);
     }
-    // painel de calibração da tela inicial
-    const calBar = document.getElementById("calBar" + axis);
+    const calBar = byId("calBar" + axis);
     if (calBar) {
       calBar.value = snap.smooth[i];
-      document.getElementById("calVal" + axis).textContent =
+      byId("calVal" + axis).textContent =
         snap.raw[i] + " -> " + snap.smooth[i].toFixed(2);
     }
   });
 
   const cellText =
-    "célula  X" + snap.ixyz[0] + "  Y" + snap.ixyz[1] + "  Z" + snap.ixyz[2];
-  const cellMenu = document.getElementById("cellReadout");
+    "zona  X" + snap.ixyz[0] + "  Y" + snap.ixyz[1] + "  Z" + snap.ixyz[2];
+  const cellMenu = byId("cellReadout");
   if (cellMenu) cellMenu.textContent = cellText;
-  const cellCal = document.getElementById("calibCell");
+  const cellCal = byId("calibCell");
   if (cellCal) cellCal.textContent = cellText;
 }
 
 // ---------------------------------------------------------------------
-// Um quadro do pipeline (tracking.js)
+// Um quadro do pipeline
 // ---------------------------------------------------------------------
 tracker.addEventListener("frame", (e) => {
   const snap = e.detail;
   updateSensorDebug(snap);
-  applyPosition(snap.ixyz);
-  // Durante a varredura de calibração os limites mudam a cada quadro,
-  // então os índices oscilam. Não disparamos confirmar/cancelar nesse
-  // intervalo — só seguimos o cursor.
-  if (!snap.calibrating) handleZ(snap.ixyz[2]);
+
+  // Durante a varredura de calibração os limites mudam a cada quadro, então
+  // as zonas oscilam. Congelamos a navegação e mantemos os temporizadores
+  // zerados — é isso que evita terminar a calibração já "dentro" de Z0.
+  if (snap.calibrating) {
+    nav.reset();
+    return;
+  }
+
+  nav.update(snap);
 });
+
+nav.onFocus = () => paintFocus();
+
+nav.onConfirm = (target) => {
+  if (target && target.confirm) target.confirm();
+};
+
+/**
+ * A REGRA DO Z2 (uma só, para todas as telas)
+ * -------------------------------------------
+ * Z2 pede ao alvo em FOCO para se desfazer. Se o alvo não tinha nada a
+ * desfazer (devolveu falso, ou não tem ação secundária), Z2 sai da tela.
+ *
+ * Isso mantém o Z2 sempre no escopo do que está sendo apontado:
+ *
+ *   cardápio, item com quantidade > 0  -> remove uma unidade
+ *   cardápio, item com quantidade 0    -> nada a desfazer; cardápio não tem
+ *                                         voltar, então nada acontece
+ *   pagamento, forma em foco escolhida -> desmarca
+ *   pagamento, forma em foco NÃO       -> nada a desfazer neste alvo, então
+ *     escolhida                           volta à revisão (sem mexer na
+ *                                         escolha atual)
+ *   revisão / botões                   -> volta uma tela
+ */
+nav.onSecondary = (target) => {
+  if (target && target.secondary && target.secondary() === true) return;
+  const back = SCREEN_BACK[state.screen];
+  if (back) back();
+};
 
 // ---------------------------------------------------------------------
 // Calibração — equivalente ao `mousePressed && mouseButton == LEFT` do
 // sketch: enquanto o botão está pressionado, os limites são aprendidos.
 // ---------------------------------------------------------------------
-const btnCalibrate = document.getElementById("btnCalibrate");
+const btnCalibrate = byId("btnCalibrate");
 
 btnCalibrate.addEventListener("pointerdown", (e) => {
   e.preventDefault();
@@ -362,7 +459,16 @@ window.addEventListener("keyup", (e) => {
 
 tracker.addEventListener("calibration", () => {
   btnCalibrate.classList.toggle("calibrating", tracker.calibrating);
-  const hint = document.getElementById("calibHint");
+
+  if (!tracker.calibrating) {
+    nav.reset();
+    // A varredura pelo teclado termina com a mão virtual num extremo;
+    // devolvê-la ao centro deixa Z em Z1 (neutro), pronto para o primeiro
+    // confirmar — sem precisar "sair e voltar" antes de selecionar.
+    if (fake.isConnected) fake.recenter();
+  }
+
+  const hint = byId("calibHint");
   if (tracker.calibrating) {
     hint.textContent =
       "Definindo limites — mova a mão por todo o alcance de cada placa, do encosto até fora de alcance.";
@@ -380,18 +486,19 @@ tracker.addEventListener("calibration", () => {
   updateStartGate();
 });
 
-document.getElementById("btnResetCalib").addEventListener("click", () => {
+byId("btnResetCalib").addEventListener("click", () => {
   tracker.reset();
+  nav.reset();
 });
 
 // ---------------------------------------------------------------------
-// Conexão — ArduinoLink e FakeArduinoLink têm a mesma interface, então
-// os dois são ligados ao pipeline exatamente do mesmo jeito.
+// Conexão — ArduinoLink e FakeArduinoLink têm a mesma interface
 // ---------------------------------------------------------------------
 function wireLink(source, statusKind, statusText) {
   source.addEventListener("data", (e) => tracker.update(e.detail.raw));
   source.addEventListener("connect", () => {
     setSensorStatus(statusKind, statusText);
+    nav.reset();
     updateStartGate();
   });
   source.addEventListener("disconnect", () => {
@@ -413,45 +520,48 @@ function anySourceConnected() {
 
 /** O pedido só começa com uma fonte conectada E a calibração feita. */
 function updateStartGate() {
-  const btnStart = document.getElementById("btnStartOrder");
-  const btnConnect = document.getElementById("btnConnect");
+  const btnStart = byId("btnStartOrder");
+  const btnConnect = byId("btnConnect");
   btnStart.disabled = !(anySourceConnected() && tracker.isCalibrated);
 
   btnConnect.disabled = link.isConnected;
-  btnConnect.textContent = link.isConnected ? "🔌 Conectado" : "🔌 Conectar ao Arduino";
+  btnConnect.textContent = link.isConnected
+    ? "🔌 Conectado"
+    : "🔌 Conectar ao Arduino";
   btnCalibrate.disabled = !anySourceConnected();
 
-  const hint = document.getElementById("startHint");
+  const hint = byId("startHint");
   if (!anySourceConnected()) {
     hint.textContent = "Conecte o Arduino ou ative o firmware falso para continuar.";
   } else if (!tracker.isCalibrated) {
-    hint.textContent = "Falta calibrar: segure Definir limites e varra a mão pelas três placas.";
+    hint.textContent =
+      "Falta calibrar: segure Definir limites e varra a mão pelas três placas.";
   } else {
     hint.textContent = "Pronto! Abaixe a mão sobre a placa Z (ou clique) para iniciar.";
   }
 }
 
 function setSensorStatus(kind, text) {
-  const dot = document.getElementById("sensorDot");
+  const dot = byId("sensorDot");
   dot.classList.remove("online", "sim");
   if (kind === "online") dot.classList.add("online");
   if (kind === "sim") dot.classList.add("sim");
-  document.getElementById("sensorStatusText").textContent = text;
+  byId("sensorStatusText").textContent = text;
 }
 
 // ---------------------------------------------------------------------
 // Firmware falso (teclado): setas para X/Y, w/s para Z
 // ---------------------------------------------------------------------
-document.getElementById("chkSimMode").addEventListener("change", async (e) => {
+byId("chkSimMode").addEventListener("change", async (e) => {
   state.simMode = e.target.checked;
   if (state.simMode) await fake.connect();
   else await fake.disconnect();
 });
 
 // ---------------------------------------------------------------------
-// Botões de navegação e ações de UI
+// Botões de navegação e ações de UI (mouse continua funcionando)
 // ---------------------------------------------------------------------
-document.getElementById("btnConnect").addEventListener("click", async () => {
+byId("btnConnect").addEventListener("click", async () => {
   try {
     await link.connect();
   } catch (err) {
@@ -459,40 +569,44 @@ document.getElementById("btnConnect").addEventListener("click", async () => {
   }
 });
 
-document.getElementById("btnStartOrder").addEventListener("click", () => showScreen("menu"));
-document.getElementById("btnFinishOrder").addEventListener("click", () => showScreen("review"));
-document.getElementById("btnBackToMenu").addEventListener("click", () => showScreen("menu"));
-document.getElementById("btnGoToPayment").addEventListener("click", () => showScreen("payment"));
-document.getElementById("btnBackToReview").addEventListener("click", () => showScreen("review"));
+byId("btnStartOrder").addEventListener("click", () => showScreen("menu"));
+byId("btnFinishOrder").addEventListener("click", () => showScreen("review"));
+byId("btnBackToMenu").addEventListener("click", () => showScreen("menu"));
+byId("btnGoToPayment").addEventListener("click", () => showScreen("payment"));
+byId("btnBackToReview").addEventListener("click", () => showScreen("review"));
 
-paymentButtons().forEach((btn, i) => {
+document.querySelectorAll(".payment-option").forEach((btn) => {
   btn.addEventListener("click", () => {
-    state.paymentFocus = i;
+    nav.focusKey("pay-" + btn.dataset.method);
     state.paymentMethod = btn.dataset.method;
     renderPayment();
+    paintFocus();
   });
 });
 
 function confirmPurchase() {
+  if (!state.paymentMethod) return;
   const orderNumber = String(Math.floor(100 + Math.random() * 900));
-  document.getElementById("orderNumber").textContent = orderNumber;
-  document.getElementById("confirmationList").innerHTML =
-    document.getElementById("reviewList").innerHTML;
-  document.getElementById("confirmationTotal").textContent = formatBRL(cartTotal());
+  byId("orderNumber").textContent = orderNumber;
+  byId("confirmationList").innerHTML = byId("reviewList").innerHTML;
+  byId("confirmationTotal").textContent = formatBRL(cartTotal());
   showScreen("confirmation");
 }
 
-function newOrder() {
+function startNewOrder() {
   state.cart = {};
   state.paymentMethod = null;
-  state.paymentFocus = 0;
-  state.cursorRow = 0;
-  state.cursorCol = 0;
-  showScreen("start");
+  // Fluxo de totem: o proximo cliente cai direto no cardapio, sem passar
+  // pela tela inicial. Mas a tela inicial e o unico lugar com "Conectar" e
+  // "Definir limites" — entao se a fonte caiu ou a calibracao se perdeu,
+  // voltamos para la, para nao ficar preso num cardapio que nao responde.
+  const ready = anySourceConnected() && tracker.isCalibrated;
+  showScreen(ready ? "menu" : "start");
 }
 
-document.getElementById("btnConfirmPurchase").addEventListener("click", confirmPurchase);
-document.getElementById("btnNewOrder").addEventListener("click", newOrder);
+byId("btnConfirmPurchase").addEventListener("click", confirmPurchase);
+byId("btnNewOrder").addEventListener("click", startNewOrder);
 
-// estado inicial dos botões / textos
+// estado inicial
+showScreen("start");
 updateStartGate();

@@ -12,7 +12,7 @@ número de retirada**.
 Toda a inteligência mora no **PC**, não no Arduino.
 
 ```
-arduino/totem/totem.ino          web/serial.js        web/tracking.js       web/app.js
+arduino/totem/totem.ino      web/serial.js     web/tracking.js   web/navigation.js + app.js
    (NAO ALTERAR)                                      (porte do Processing)
 ┌────────────────────┐        ┌───────────────┐     ┌──────────────────┐   ┌──────────────┐
 │ mede o tempo de    │  USB   │ Web Serial:   │     │ Normalize        │   │ ixyz[0] X →  │
@@ -122,36 +122,61 @@ pasta `web/`:
 
 ```bash
 cd web
-python -m http.server 8080
+python serve.py          # porta 8080; use "python serve.py 9000" para outra
 ```
 
 Depois abra `http://localhost:8080` no Chrome.
 
+### Por que `serve.py` e não `python -m http.server`
+
+Porque `http.server` deixa o Chrome guardar os `.js` em cache. Você edita
+uma constante (`DWELL_Z_MS`, digamos), reinicia o servidor, recarrega a
+página — **e nada muda**, porque o arquivo velho está no cache do
+*navegador*, não do servidor. Reiniciar o servidor não tem como resolver
+isso. O `serve.py` manda `Cache-Control: no-store` em tudo, então cada
+recarga busca os arquivos de novo.
+
+Se preferir continuar com `python -m http.server`, então depois de editar
+qualquer `.js` faça um **recarregamento forçado**: `Ctrl+Shift+R` (ou
+`Ctrl+F5`). Ou deixe o DevTools aberto com *Network → Disable cache*
+marcado, que vale enquanto o DevTools estiver aberto.
+
+**Como conferir qual valor está rodando de verdade:** abra o console do
+navegador (F12) e digite o nome da constante:
+
+```js
+DWELL_XY_MS    // 2000
+DWELL_Z_MS     // 2000
+REPEAT_XY_MS   // 1000
+```
+
+São constantes globais, então o console mostra o valor que a página
+realmente carregou. Se aparecer o valor antigo, é cache — não é o código.
+
 ### Fluxo de uso
 
-1. **Início** — clique em **Conectar ao Arduino** (a Web Serial API abre um
-   seletor de porta nativo) ou marque **Firmware falso** para testar pelo
-   teclado, sem hardware.
-2. **Calibração** (obrigatória) — **segure** o botão *Definir limites* (ou a
-   barra de espaço) e varra a mão por todo o alcance de cada placa, do
-   encosto até fora de alcance. Isso é o equivalente exato do
-   `mousePressed && mouseButton == LEFT` do sketch Processing: enquanto o
-   botão está pressionado, `Normalize.note()` aprende o mín/máx de cada
-   eixo. O painel mostra a contagem crua, o valor suavizado e a célula atual.
-   *Iniciar Pedido* só libera quando os três eixos tiverem uma faixa
-   utilizável. *Reiniciar calibração* equivale ao botão direito do mouse no
-   sketch (`reset()`).
-3. **Cardápio** — mova a mão em X/Y para percorrer os 9 itens; abaixe a mão
-   sobre a placa Z para **adicionar** o item em foco, levante para
-   **remover**. Para adicionar o mesmo item duas vezes, volte à **zona
-   neutra** entre as duas confirmações — varrer direto para o extremo oposto
-   passa pela zona de cancelar e remove o item.
-4. **Revisão** — Z confirma (segue para pagamento), Z cancela (volta ao
-   cardápio).
-5. **Pagamento** — X/Y movem o foco entre as 4 formas; a primeira
-   confirmação escolhe a forma em foco, a segunda (sobre a forma já
-   escolhida) fecha a compra. Z cancela volta para a revisão.
-6. **Confirmação** — mostra o número do pedido. Z confirma inicia um novo.
+1. **Início** — clique em **Conectar ao Arduino** ou marque **Firmware
+   falso** para testar pelo teclado.
+2. **Calibração** (obrigatória) — **segure** *Definir limites* (ou a barra
+   de espaço) e varra a mão por todo o alcance de cada placa. Equivale ao
+   `mousePressed && mouseButton == LEFT` do sketch Processing. A navegação
+   fica congelada durante a varredura e os temporizadores são zerados no
+   fim — sem isso, terminar a varredura com a mão dentro de Z0 deixaria o
+   eixo travado esperando você "sair e voltar" antes do primeiro confirmar.
+3. **Cardápio** — X/Y movem o cursor pela grade 3x4; Z0 adiciona o item em
+   foco, Z2 remove. A 4a coluna é *Concluir Pedido*: vá para a direita até
+   o fim e confirme com Z0.
+4. **Revisão** — X move entre *Voltar ao Cardápio* e *Prosseguir para
+   Pagamento*; Z0 aciona o que está em foco, Z2 volta ao cardápio.
+5. **Pagamento** — X/Y percorrem as 4 formas e a linha de ações; Z0 escolhe
+   a forma em foco e, sobre *Concluir Compra*, fecha o pedido. Z2 **sobre a
+   forma escolhida** a desmarca; em qualquer outro alvo, volta à revisão sem
+   mexer na escolha (ver [A regra do Z2](#a-regra-do-z2)).
+6. **Confirmação** — mostra o número do pedido; Z0 inicia um novo pedido,
+   voltando **direto ao cardápio** (fluxo de totem: o próximo cliente já
+   começa a escolher). Se nesse momento a fonte de dados tiver caído ou a
+   calibração se perdido, cai na tela inicial em vez do cardápio — ela é o
+   único lugar com *Conectar* e *Definir limites*.
 
 Todos os botões continuam clicáveis com o mouse, como fallback.
 
@@ -171,7 +196,7 @@ justamente a parte que precisa ser testada.
 |---|---|
 | `←` / `→` | eixo X — coluna à esquerda / à direita |
 | `↑` / `↓` | eixo Y — linha de cima / de baixo |
-| `w` / `s` | eixo Z — levanta (cancelar) / abaixa (confirmar) |
+| `w` / `s` | eixo Z — levanta (ação secundária) / abaixa (confirmar) |
 
 Cada toque move a "mão virtual" em `FAKE_STEP` (0.08 de um curso 0–1);
 **manter a tecla pressionada** usa a repetição do teclado e varre o eixo em
@@ -190,40 +215,151 @@ três células fiquem com faixas de tamanho parecido (~28% / ~43% / ~30% do
 curso de `u`). Há também ±0.4% de ruído, para o comportamento se parecer
 com um sensor de verdade.
 
-## Mapeamento de posição
+## Navegação: controle por TAXA, não por posição
 
-Origem no encontro das 3 placas. O pipeline devolve uma posição
-**absoluta** por eixo — `0`, `1` ou `2` — e não eventos de passo. Logo o
-cursor é **atribuído**, nunca incrementado: não há zona morta, taxa de
-repetição nem risco de dessincronizar com a mão.
+Antes, `ixyz[0]` **era** a coluna e `ixyz[1]` **era** a linha. Isso amarrava o
+layout à resolução do sensor: a grade tinha que ter exatamente 3x3 porque o
+sensor tem exatamente 3 zonas por eixo. Foi por isso que a tela de pagamento
+(4 opções) ficou sem navegação nenhuma — não existe mapeamento de 3 zonas
+para 4 alvos.
 
-| Eixo | `0` | `1` | `2` |
+Agora os eixos são **comandos**, e o layout pode ter qualquer tamanho:
+
+| Eixo | Zona 0 | Zona 1 | Zona 2 |
 |---|---|---|---|
-| X (`ixyz[0]`) | coluna esquerda | coluna central | coluna direita |
-| Y (`ixyz[1]`) | linha de cima | linha central | linha de baixo |
-| Z (`ixyz[2]`) | **confirmar** (mão na placa) | neutro | **cancelar** (mão longe) |
+| X | move para a **esquerda** | parado | move para a **direita** |
+| Y | move para **cima** | parado | move para **baixo** |
+| Z | **confirmar** (mão na placa) | nada | **ação secundária** (mão longe) |
 
-O eixo Z usa detecção de **borda** com permanência (`Z_DWELL_FRAMES = 3`,
-≈300 ms a 10 Hz): o evento dispara uma única vez por entrada na zona, e só
-rearma quando a mão volta à zona neutra. Isso evita que a mão de passagem
-dispare uma confirmação e que uma mão parada repita o evento a cada quadro.
+- **Sem comportamento cíclico**: na borda, o cursor para. Isso importa mais
+  aqui do que no modelo anterior — com repetição automática, uma grade
+  cíclica deixaria uma mão esquecida girando o cardápio para sempre.
+- **Diagonal funciona**: X e Y têm temporizadores independentes, então sair
+  do centro nos dois ao mesmo tempo faz os dois expirarem juntos. Entrando
+  em momentos diferentes sai uma escadinha — imperceptível na prática.
 
-Enquanto a calibração está ativa, os eventos de Z ficam suspensos (os
-limites mudam a cada quadro, então os índices oscilam) — só o cursor
-continua acompanhando.
+### A assimetria entre X/Y e Z (importante)
+
+**X e Y repetem** enquanto a mão fica fora do centro, como tecla segurada:
+primeiro passo depois de `DWELL_XY_MS`, os seguintes a cada `REPEAT_XY_MS`.
+
+**Z dispara uma única vez por entrada na zona** e só rearma quando a mão
+volta para Z1. Isso não é detalhe: se Z repetisse igual a X/Y, uma mão
+parada perto da placa atravessaria *Concluir Pedido* -> *Prosseguir para
+Pagamento* -> *Concluir Compra* em três tiques, fechando um pedido real
+sozinha.
+
+### Onde deixar a zona morta — é decisão de calibração
+
+Como Z1 (o centro) é a única zona inerte, **a posição em que a mão
+naturalmente descansa tem que cair em Z1**. Na prática: ao calibrar o eixo
+Z, use como extremo "longe" a altura confortável de sobrevoo, **não** a mão
+ausente. Aí sobrevoar lê Z1, abaixar lê Z0 (confirmar) e levantar lê Z2.
+Se a zona morta cair no lugar errado, a interface fica acionando sozinha —
+e isso se resolve recalibrando, não mexendo no código.
+
+### Mapas de foco
+
+Cada tela declara uma matriz de alvos focáveis e o motor cuida do resto:
+
+| Tela | Mapa |
+|---|---|
+| início | 1 x 1 (Iniciar Pedido) |
+| cardápio | **3 x 4** — 9 itens + a coluna de *Concluir Pedido* |
+| revisão | 1 x 2 (Voltar, Prosseguir) |
+| pagamento | 3 x 2 — 2x2 de formas + linha de ações |
+| confirmação | 1 x 1 (Novo Pedido) |
+
+No cardápio, a 4a coluna é a **mesma referência de alvo** nas três linhas.
+Isso resolve de graça a pergunta "voltando do botão, para qual linha eu
+vou?": saindo de `[1][3]` para a esquerda você cai em `[1][2]` — a linha de
+origem é lembrada sem nenhum `lastRow` guardado.
+
+Linhas podem ter tamanhos diferentes; mover na vertical para uma linha mais
+curta fixa a coluna no último índice válido.
+
+### A regra do Z2
+
+Uma regra só, para todas as telas:
+
+> **Z2 pede ao alvo em FOCO para se desfazer. Se aquele alvo não tinha nada
+> a desfazer, Z2 sai da tela.**
+
+O detalhe que importa é o **escopo**: Z2 só age sobre o que está sendo
+apontado. Nunca sobre outro alvo.
+
+| Tela | Alvo em foco | Z2 faz |
+|---|---|---|
+| cardápio | item com quantidade > 0 | remove uma unidade |
+| cardápio | item com quantidade 0 | nada a desfazer → cardápio não tem voltar → **nada** |
+| cardápio | *Concluir Pedido* | nada a desfazer → **nada** |
+| pagamento | a forma **escolhida** | desmarca (e volta a bloquear *Concluir Compra*) |
+| pagamento | uma forma **não** escolhida | nada a desfazer *neste alvo* → volta à revisão, **sem** mexer na escolha |
+| pagamento | *Voltar* / *Concluir Compra* | volta à revisão |
+| revisão | qualquer botão | volta ao cardápio |
+| confirmação | *Novo Pedido* | nada (a compra já fechou) |
+
+Mecanicamente, `secondary()` do alvo devolve `true` quando desfez algo; se
+devolver `false` (ou o alvo não tiver ação secundária), o Z2 cai no voltar
+da tela.
+
+Apontando para a forma que já está escolhida, isso dá naturalmente o
+comportamento de **dois estágios**: o primeiro Z2 desmarca, o segundo (agora
+sem nada escolhido naquele alvo) volta à revisão.
+
+> Duas versões anteriores erraram aqui, e vale registrar por quê. A primeira
+> fazia Z2 sair da tela de pagamento direto — inconsistente, porque no
+> cardápio Z2 desfaz e ali ele abandonava o passo inteiro. A segunda passou
+> a desmarcar, mas em **escopo de tela**: apontando para o Pix, Z2 limpava o
+> Crédito — agia sobre um alvo que não estava sendo apontado. A regra de
+> escopo de alvo acima resolve as duas.
+
+### Feedback na tela
+
+Como o cursor agora é **estado que não se autocorrige** (um eixo travado
+caminha até a borda e fica lá), a interface mostra o porquê:
+
+- HUD no cabeçalho com a direção ativa de cada eixo, o valor normalizado e
+  uma barrinha do temporizador — visível em todas as telas.
+- Barra de permanência no alvo focado, enchendo durante `DWELL_Z_MS`
+  (verde para confirmar, vermelho para a ação secundária).
+- Os painéis de leitura bruta/normalizada continuam onde estavam.
 
 ## Ajustes finos
 
 | Constante | Arquivo | Efeito |
 |---|---|---|
-| `Z_DWELL_FRAMES` | `app.js` | quanto tempo a mão fica na zona antes de confirmar |
-| `CUTOFF` | `tracking.js` | largura da célula central (⚠️ vem do sketch) |
-| `MomentumAverage(0.15)` | `tracking.js` | responsividade × tremor (⚠️ vem do sketch) |
+| `DWELL_XY_MS` (500) | `navigation.js` | tempo parado antes do **primeiro** passo de X/Y |
+| `REPEAT_XY_MS` (350) | `navigation.js` | intervalo da repetição enquanto a mão fica fora do centro |
+| `DWELL_Z_MS` (500) | `navigation.js` | tempo na zona antes de confirmar / ação secundária |
+| `HYSTERESIS_ENABLED` (false) | `navigation.js` | histerese de fronteira — ver abaixo |
+| `CUTOFF` | `tracking.js` | largura da zona morta (vem do sketch) |
+| `MomentumAverage(0.15)` | `tracking.js` | responsividade x tremor (vem do sketch) |
 | `MIN_CALIBRATION_RATIO` | `tracking.js` | rigor do portão de calibração |
 | `FAKE_STEP`, `FAKE_DMAX` | `fake-firmware.js` | só o firmware falso |
 
-As linhas marcadas com ⚠️ fazem parte do porte validado — mexer nelas
+Depois de mudar qualquer uma delas, recarregue com `serve.py` (ou force o
+recarregamento) — ver [Rodando o front-end](#rodando-o-front-end).
+
+As linhas de `tracking.js` fazem parte do porte validado — mexer nelas
 significa divergir do comportamento já testado no hardware.
+
+`DWELL_XY_MS` e `DWELL_Z_MS` são constantes separadas de propósito, ainda que
+hoje valham o mesmo: confirmar pode querer ser mais lento que navegar (menos
+falso positivo), ou o contrário, sem que uma mudança afete a outra.
+
+### Histerese (implementada, desligada)
+
+`HYSTERESIS_ENABLED = false`. Com `CUTOFF = 0.2` a zona morta ocupa de 0.2 a
+0.8 do curso, que é folga de sobra; ligar só faz sentido se aparecer tremor
+na fronteira. Vale saber que, em controle por taxa, um flicker de fronteira
+não só pisca o destaque — ele **injeta passos**. Se isso acontecer, mude a
+constante para `true` (a margem é `HYSTERESIS_MARGIN`, 0.04).
+
+Detalhe medido: com a mão voltando ao centro, o EMA leva ~300 ms para sair
+da zona, e `REPEAT_XY_MS` é 350 ms — ou seja, hoje **não** sobra passo
+fantasma, mas a margem é estreita. Baixar `REPEAT_XY_MS` para menos de
+~300 ms passa a produzir um passo extra por movimento.
 
 ## Pasta `firmware/` (obsoleta)
 
