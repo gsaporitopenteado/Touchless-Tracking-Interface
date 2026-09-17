@@ -151,7 +151,7 @@ void desenhaInicio() {
   String[] linhas = {
     "Mova a mao em X e Y para andar pela tela",
     "Abaixe a mao sobre a placa Z para confirmar",
-    "Levante a mao da placa Z para desfazer ou voltar"
+    "Levante a mao da placa Z para desfazer o item em foco"
   };
   float iy = y + 132;
   for (int i = 0; i < linhas.length; i++) {

@@ -87,8 +87,8 @@ class MomentumAverage {
 // validaCutoffs() avisa no console ao abrir o sketch.
 // ------------------------------------------------------------
 //                                X     Y     Z
-final float[] CUTOFF_BAIXO = { 0.2,  0.5,  0.25 };
-final float[] CUTOFF_ALTO  = { 0.8,  0.8,  0.7 };
+final float[] CUTOFF_BAIXO = { 0.35,  0.2,  0.35 };
+final float[] CUTOFF_ALTO  = { 0.8,  0.65,  0.8 };
 
 int getPosition(int eixo, float x) {
   if (x < CUTOFF_BAIXO[eixo]) return 0;

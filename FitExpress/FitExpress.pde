@@ -15,7 +15,7 @@
 //   <- / ->    eixo X   (segure; o cursor anda e repete)
 //   ^  / v     eixo Y
 //   s          eixo Z para baixo  = CONFIRMAR
-//   w          eixo Z para cima   = DESFAZER / VOLTAR
+//   w          eixo Z para cima   = DESFAZER (nunca troca de tela)
 //
 //   C (segurar) calibra: varra a mao por todo o alcance de cada placa
 //   A           varredura de calibracao automatica (com firmware falso)
@@ -272,23 +272,30 @@ void onConfirmar(Target t) {
 /**
  * Z2 - A REGRA DO DESFAZER (uma so, para todas as telas)
  * ------------------------------------------------------
- * Z2 pede ao alvo em FOCO para se desfazer. Se aquele alvo nao tinha
- * nada a desfazer, Z2 sai da tela.
- *
- * Isso mantem o Z2 sempre no escopo do que esta sendo apontado:
+ * Z2 desfaz o que esta em FOCO, e NUNCA troca de tela.
  *
  *   cardapio, item com quantidade > 0  -> remove uma unidade
- *   cardapio, item com quantidade 0    -> nada a desfazer; o cardapio
- *                                         nao tem voltar, nada acontece
+ *   cardapio, item com quantidade 0    -> nada
  *   pagamento, forma em foco escolhida -> desmarca
- *   pagamento, forma em foco NAO       -> nada a desfazer neste alvo,
- *     escolhida                           volta a revisao sem mexer na
- *                                         escolha atual
- *   revisao / botoes                   -> volta uma tela
+ *   pagamento, forma em foco NAO       -> nada
+ *     escolhida
+ *   botoes, qualquer tela              -> nada
+ *
+ * POR QUE Z2 NAO VOLTA MAIS DE TELA
+ * ---------------------------------
+ * No hardware real, Z2 (mao LONGE da placa Z) e indistinguivel de "nao
+ * tem mao nenhuma dentro do meio-cubo". Basta o cliente afastar a mao e,
+ * passado o dwell, o Z2 dispara. Enquanto Z2 so desfaz algo no alvo em
+ * foco, isso e recuperavel. Quando ele TROCAVA DE TELA, afastar a mao
+ * jogava o cliente para a tela anterior sozinho - foi o que ficou
+ * impossivel de controlar nos testes com as placas.
+ *
+ * Voltar de tela agora e exclusivamente pelos botoes "Voltar ao
+ * Cardapio" e "Voltar", acionados com Z0 - que exige a mao PRESENTE
+ * sobre a placa Z, um gesto que o cliente nunca faz por acidente.
  */
 void onDesfazer(Target t) {
-  if (desfazAlvo(t)) return;
-  voltaTela();
+  desfazAlvo(t);
 }
 
 boolean desfazAlvo(Target t) {
@@ -301,13 +308,6 @@ boolean desfazAlvo(Target t) {
     return true;
   }
   return false;   // botoes nao tem nada a desfazer
-}
-
-/** Telas ausentes daqui nao tem voltar: o cardapio e o inicio do
- *  pedido, e a confirmacao ja fechou a compra. */
-void voltaTela() {
-  if (tela == TELA_REVISAO) irPara(TELA_CARDAPIO);
-  else if (tela == TELA_PAGAMENTO) irPara(TELA_REVISAO);
 }
 
 void executaAcao(String key) {

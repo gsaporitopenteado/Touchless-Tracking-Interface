@@ -7,7 +7,7 @@
 //
 //   X: 0 = move para a esquerda | 1 = parado | 2 = move para a direita
 //   Y: 0 = move para cima       | 1 = parado | 2 = move para baixo
-//   Z: 0 = confirmar            | 1 = nada   | 2 = desfazer/voltar
+//   Z: 0 = confirmar            | 1 = nada   | 2 = desfazer (no alvo)
 //
 // ASSIMETRIA DELIBERADA ENTRE X/Y E Z
 // -----------------------------------
